@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import sys
+import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -21,6 +22,13 @@ def run() -> None:
     splits = prepare_splits(config, tokenizer, path)
     for name, cases in splits.items():
         print(f"{name}: {len(cases)} cases ({', '.join(config.topics)})")
+    audit = json.loads(path.read_text(encoding="utf-8")).get("selection_audit", {})
+    for topic, counts in audit.items():
+        print(f"[{topic}] train source={counts['train']['source_rows']} "
+              f"integer+prompt eligible={counts['train']['eligible']} "
+              f"test source={counts['test']['source_rows']} "
+              f"integer+prompt eligible={counts['test']['eligible']} "
+              f"anchor gold fits={counts['anchor_gold_fits']}")
     print(f"Frozen splits: {path}")
 
 

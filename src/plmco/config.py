@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass, fields
+from dataclasses import MISSING, dataclass, fields
 from pathlib import Path
 
 
@@ -27,7 +27,6 @@ class ExperimentConfig:
     temperature: float
     top_p: float
     learning_rate: float
-    replay_weight: float
     target_flip_rate: float
     dual_learning_rate: float
     max_retention_weight: float
@@ -43,13 +42,20 @@ class ExperimentConfig:
     lora_dropout: float
     lora_targets: list[str]
     log_every: int
+    quantization_4bit: bool = False
+    reference_kl_beta: float = 0.04
+    cokl_beta: float = 0.001
+    cokl_reference_group_size: int = 4
+    cokl_is_epsilon: float = 0.2
 
     @classmethod
     def from_json(cls, path: str | Path) -> "ExperimentConfig":
         payload = json.loads(Path(path).read_text(encoding="utf-8"))
         allowed = {field.name for field in fields(cls)}
-        if set(payload) != allowed:
-            raise ValueError(f"Config missing={sorted(allowed - set(payload))}, extra={sorted(set(payload) - allowed)}")
+        required = {field.name for field in fields(cls)
+                    if field.default is MISSING and field.default_factory is MISSING}
+        if required - set(payload) or set(payload) - allowed:
+            raise ValueError(f"Config missing={sorted(required - set(payload))}, extra={sorted(set(payload) - allowed)}")
         result = cls(**payload)
         if not result.topics or len(set(result.topics)) != len(result.topics):
             raise ValueError("topics must be nonempty and unique")
@@ -60,8 +66,18 @@ class ExperimentConfig:
         if min(result.train_per_topic, result.anchor_per_topic,
                result.validation_per_topic, result.test_per_topic) < 1:
             raise ValueError("Each split needs at least one problem per topic")
-        if not 0 <= result.replay_weight or not 0 < result.clip_epsilon < 1:
-            raise ValueError("Invalid replay_weight or clip_epsilon")
+        if not 0 < result.clip_epsilon < 1:
+            raise ValueError("Invalid clip_epsilon")
+        if result.reference_kl_beta < 0 or result.cokl_beta < 0:
+            raise ValueError("KL coefficients must be nonnegative")
+        if result.cokl_reference_group_size < 2 or not 0 < result.cokl_is_epsilon < 1:
+            raise ValueError("Invalid CoKL reference group or importance clip")
+        if not isinstance(result.quantization_4bit, bool):
+            raise ValueError("quantization_4bit must be a boolean")
+        if result.max_sft_tokens < result.max_prompt_tokens or min(
+            result.max_completion_tokens, result.eval_max_new_tokens,
+            result.retention_eval_tokens) < 1:
+            raise ValueError("Invalid token limits")
         if not 0 <= result.target_flip_rate < 1:
             raise ValueError("target_flip_rate must be in [0, 1)")
         if result.dual_learning_rate <= 0 or result.max_retention_weight <= 0:
@@ -74,8 +90,8 @@ class ExperimentConfig:
 
 
 def active_config(root: Path) -> ExperimentConfig:
-    """Select a config without editing the long-running default experiment."""
-    name = os.environ.get("PLMCO_CONFIG", "pilot.json")
+    """Select an immutable config for an experiment run."""
+    name = os.environ.get("PLMCO_CONFIG", "general_math_baseline.json")
     if Path(name).name != name or not name.endswith(".json"):
         raise ValueError("PLMCO_CONFIG must name a JSON file in configs/")
     return ExperimentConfig.from_json(root / "configs" / name)

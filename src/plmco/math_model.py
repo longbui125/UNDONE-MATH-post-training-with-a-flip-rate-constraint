@@ -1,4 +1,4 @@
-"""Generation, exact integer grading, and gold-solution rehearsal loss."""
+"""Generation, exact integer grading, and anchor gold-solution loss."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -20,6 +20,7 @@ class Rollout:
     parsed_answer: int | None = None
     has_box: bool = False
     old_logprobs: torch.Tensor | None = None
+    reference_logprobs: torch.Tensor | None = None
 
     @property
     def length(self) -> int:
@@ -54,13 +55,24 @@ def gold_solution_loss(model, tokenizer, case: MathCase, config: ExperimentConfi
     return -completion_logprobs(model, ids, prefix.numel()).mean()
 
 
+def was_truncated(full: torch.Tensor, prompt_length: int, limit: int,
+                  tokenizer) -> bool:
+    """Distinguish a token-budget stop from an EOS emitted on the last token."""
+    if full.numel() - prompt_length < limit:
+        return False
+    eos = tokenizer.eos_token_id
+    eos_ids = set(eos if isinstance(eos, (list, tuple)) else [eos])
+    return int(full[-1].item()) not in eos_ids
+
+
 @torch.no_grad()
-def sample_group(model, tokenizer, case: MathCase, config: ExperimentConfig) -> list[Rollout]:
+def sample_group(model, tokenizer, case: MathCase, config: ExperimentConfig,
+                 group_size: int | None = None) -> list[Rollout]:
     model.eval()
     prefix = prompt_ids(tokenizer, case, config)
     on_device = prefix.unsqueeze(0).to(next(model.parameters()).device)
     result = []
-    for _ in range(config.group_size):
+    for _ in range(group_size or config.group_size):
         full = model.generate(
             on_device, do_sample=True, temperature=config.temperature,
             top_p=config.top_p, max_new_tokens=config.max_completion_tokens,
@@ -72,7 +84,8 @@ def sample_group(model, tokenizer, case: MathCase, config: ExperimentConfig) -> 
         length = int(full.numel() - prefix.numel())
         result.append(Rollout(full.cpu(), prefix.numel(), text,
                               float(prediction == case.answer),
-                              capped=length >= config.max_completion_tokens,
+                              capped=was_truncated(full, prefix.numel(),
+                                                   config.max_completion_tokens, tokenizer),
                               parsed_answer=prediction, has_box=last_boxed(text) is not None))
     return result
 
@@ -95,7 +108,7 @@ def evaluate_case(model, tokenizer, case: MathCase, config: ExperimentConfig,
         "uid": case.uid, "topic": case.topic, "answer": case.answer,
         "prediction": prediction, "correct": prediction == case.answer,
         "tokens": int(full.numel() - prefix.numel()),
-        "capped": int(full.numel() - prefix.numel()) >= limit,
+        "capped": was_truncated(full, prefix.numel(), limit, tokenizer),
         "has_box": last_boxed(text) is not None,
         "text": text,
     }

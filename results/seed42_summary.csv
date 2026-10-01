@@ -1,0 +1,6 @@
+seed,method,correct_test,total_test,correct_to_wrong,initially_correct_test,wrong_to_correct,train_seconds,rollout_tokens
+42,initial,47,160,0,47,0,0,0
+42,grpo,49,160,10,47,12,4482.987,76852
+42,grpo_reference_kl,43,160,11,47,7,4898.076,73688
+42,cokl_grpo,45,160,10,47,8,26038.209,76497
+42,flip_constrained_grpo,50,160,7,47,10,8719.566,79425

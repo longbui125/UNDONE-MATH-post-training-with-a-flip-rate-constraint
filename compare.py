@@ -16,10 +16,14 @@ from plmco.math_trainer import METHODS
 def run() -> None:
     config = active_config(ROOT)
     output = ROOT / "outputs" / config.run_name
+    reference_path = output / "cokl_reference_buffer.json"
+    reference_meta = (json.loads(reference_path.read_text(encoding="utf-8"))
+                      if reference_path.exists() else {})
     rows = []
     for seed in config.training_seeds:
         initial = json.loads((output / f"seed_{seed}" / "initial" / "evaluation.json").read_text(encoding="utf-8"))
-        before = {row["uid"]: row["correct"] for row in initial["test"]["predictions"]}
+        before_rows = {row["uid"]: row for row in initial["test"]["predictions"]}
+        before = {uid: row["correct"] for uid, row in before_rows.items()}
         before_validation = {row["uid"]: row["correct"]
                              for row in initial["validation"]["predictions"]}
         for method in ("initial", *METHODS):
@@ -28,6 +32,8 @@ def run() -> None:
             summary = (json.loads((folder / "summary.json").read_text(encoding="utf-8"))
                        if method != "initial" else {"seconds": 0, "stats": {}})
             after = evaluation["test"]["predictions"]
+            paired_uncapped = [item for item in after
+                               if not item["capped"] and not before_rows[item["uid"]]["capped"]]
             validation_after = evaluation["validation"]["predictions"]
             row = {
                 "seed": seed, "method": method,
@@ -41,12 +47,28 @@ def run() -> None:
                 "initially_correct_test": sum(before.values()),
                 "correct_to_wrong_rate": sum(before[item["uid"]] and not item["correct"] for item in after)
                 / max(1, sum(before.values())),
+                "correct_to_wrong_capped_either": sum(
+                    before[item["uid"]] and not item["correct"]
+                    and (item["capped"] or before_rows[item["uid"]]["capped"])
+                    for item in after
+                ),
+                "paired_uncapped_test": len(paired_uncapped),
+                "initially_correct_paired_uncapped": sum(before[item["uid"]] for item in paired_uncapped),
+                "correct_to_wrong_paired_uncapped": sum(
+                    before[item["uid"]] and not item["correct"] for item in paired_uncapped
+                ),
                 "validation_correct_to_wrong_rate": sum(
                     before_validation[item["uid"]] and not item["correct"]
                     for item in validation_after
                 ) / max(1, sum(before_validation.values())),
                 "wrong_to_correct": sum(not before[item["uid"]] and item["correct"] for item in after),
                 "rollout_tokens": summary["stats"].get("rollout_tokens", 0),
+                "cokl_generated_tokens": summary["stats"].get("cokl_generated_tokens", 0),
+                "retention_eval_tokens": summary["stats"].get("retention_eval_tokens", 0),
+                "cokl_reference_buffer_tokens": (reference_meta.get("generated_tokens", 0)
+                                                  if method == "cokl_grpo" else 0),
+                "cokl_reference_preparation_seconds": (reference_meta.get("preparation_seconds", 0)
+                                                         if method == "cokl_grpo" else 0),
                 "mixed_group_rate": summary["stats"].get("mixed_groups", 0)
                 / max(1, summary["stats"].get("sampled_groups", 0)),
                 "train_capped_rate": summary["stats"].get("capped_rollouts", 0)
