@@ -20,17 +20,28 @@ from plmco.modeling import load_evaluation_model, load_tokenizer
 from plmco.utils import write_json
 
 
-def run() -> None:
+def run(*, seeds: tuple[int, ...] | None = None,
+        methods: tuple[str, ...] | None = None,
+        include_initial: bool = True) -> None:
     config = active_config(ROOT)
     output = ROOT / "outputs" / config.run_name
     splits = load_splits(config, output / "splits.json")
+    seeds = tuple(config.training_seeds) if seeds is None else seeds
+    methods = METHODS if methods is None else methods
+    if not seeds or not methods or len(set(seeds)) != len(seeds) or any(
+        method not in METHODS for method in methods
+    ):
+        raise ValueError("Invalid evaluation seeds or methods")
     jobs = [(seed, method, output / f"seed_{seed}" / method)
-            for seed in config.training_seeds for method in METHODS]
-    if any(not (folder / "summary.json").exists() for _, _, folder in jobs):
-        raise RuntimeError("All training arms must finish before opening the held-out test")
+            for seed in seeds for method in methods]
+    if any(not (folder / "summary.json").exists()
+           or not (folder / "adapter" / "adapter_config.json").exists()
+           for _, _, folder in jobs):
+        raise RuntimeError("Selected training arms must finish before evaluation")
     tokenizer = load_tokenizer(config.model_name)
-    for seed in config.training_seeds:
-        for method in ("initial", *METHODS):
+    for seed in seeds:
+        selected = (("initial", *methods) if include_initial else methods)
+        for method in selected:
             folder = output / f"seed_{seed}" / method
             if (folder / "evaluation.json").exists():
                 continue

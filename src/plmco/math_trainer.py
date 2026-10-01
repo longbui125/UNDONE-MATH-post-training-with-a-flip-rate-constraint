@@ -98,6 +98,7 @@ def train_method(method: str, config: ExperimentConfig, tokenizer,
     cumulative = {topic: {"wrong": 0, "total": 0} for topic in config.topics}
     stats = {"sampled_groups": 0, "mixed_groups": 0, "updates": 0,
              "rollout_tokens": 0, "capped_rollouts": 0, "no_box_rollouts": 0,
+             "unique_completions": 0,
              "retention_checks": 0, "retention_flips": 0,
              "retention_active_updates": 0, "dual_adjustments": 0,
              "cokl_groups": 0, "cokl_current_correct": 0,
@@ -146,6 +147,8 @@ def train_method(method: str, config: ExperimentConfig, tokenizer,
         rollouts = sample_group(model, tokenizer, case, config)
         stats["sampled_groups"] += 1
         stats["rollout_tokens"] += sum(rollout.length for rollout in rollouts)
+        unique_completions = len({rollout.text for rollout in rollouts})
+        stats["unique_completions"] += unique_completions
         capped = sum(rollout.capped for rollout in rollouts)
         no_box = sum(not rollout.has_box for rollout in rollouts)
         stats["capped_rollouts"] += capped
@@ -210,6 +213,7 @@ def train_method(method: str, config: ExperimentConfig, tokenizer,
         append_jsonl(folder / "train_metrics.jsonl", {
             "step": step + 1, "topic": topic, "reward_mean": float(rewards.mean()),
             "mixed": mixed, "capped_in_group": capped, "no_box_in_group": no_box,
+            "unique_completions": unique_completions,
             "rollout_tokens": stats["rollout_tokens"],
             "retention_topic": retention_topic,
             "retention_uid": retention_case.uid if retention_case else None,
@@ -237,6 +241,7 @@ def train_method(method: str, config: ExperimentConfig, tokenizer,
     write_json(folder / "summary.json", {
         "method": method, "seed": seed, "steps": config.max_steps,
         "seconds": time.time() - started, "stats": stats,
+        "mean_unique_completions": stats["unique_completions"] / stats["sampled_groups"],
         "retention_cumulative": cumulative,
         "final_multipliers": multipliers,
         "eligible_topics": eligible_topics,

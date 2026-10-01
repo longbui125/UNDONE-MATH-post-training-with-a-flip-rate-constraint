@@ -13,28 +13,45 @@ from plmco.config import active_config
 from plmco.math_trainer import METHODS
 
 
-def run() -> None:
+def run(*, seeds: tuple[int, ...] | None = None,
+        methods: tuple[str, ...] | None = None,
+        initial_seed: int | None = None,
+        filename: str = "comparison.csv") -> None:
     config = active_config(ROOT)
     output = ROOT / "outputs" / config.run_name
+    seeds = tuple(config.training_seeds) if seeds is None else seeds
+    methods = METHODS if methods is None else methods
+    if not seeds or not methods or len(set(seeds)) != len(seeds) or any(
+        method not in METHODS for method in methods
+    ):
+        raise ValueError("Invalid comparison seeds or methods")
+    if Path(filename).name != filename or not filename.endswith(".csv"):
+        raise ValueError("Comparison filename must be a CSV in the run folder")
     reference_path = output / "cokl_reference_buffer.json"
     reference_meta = (json.loads(reference_path.read_text(encoding="utf-8"))
                       if reference_path.exists() else {})
     rows = []
-    for seed in config.training_seeds:
-        initial = json.loads((output / f"seed_{seed}" / "initial" / "evaluation.json").read_text(encoding="utf-8"))
+    for seed in seeds:
+        baseline_seed = seed if initial_seed is None else initial_seed
+        initial = json.loads((output / f"seed_{baseline_seed}" / "initial" / "evaluation.json").read_text(encoding="utf-8"))
         before_rows = {row["uid"]: row for row in initial["test"]["predictions"]}
         before = {uid: row["correct"] for uid, row in before_rows.items()}
         before_validation = {row["uid"]: row["correct"]
                              for row in initial["validation"]["predictions"]}
-        for method in ("initial", *METHODS):
+        for method in ("initial", *methods):
             folder = output / f"seed_{seed}" / method
-            evaluation = json.loads((folder / "evaluation.json").read_text(encoding="utf-8"))
+            evaluation = (initial if method == "initial" else json.loads(
+                (folder / "evaluation.json").read_text(encoding="utf-8")))
             summary = (json.loads((folder / "summary.json").read_text(encoding="utf-8"))
                        if method != "initial" else {"seconds": 0, "stats": {}})
             after = evaluation["test"]["predictions"]
+            if {item["uid"] for item in after} != set(before):
+                raise RuntimeError(f"Seed {seed}, {method}: test IDs differ from the initial model")
             paired_uncapped = [item for item in after
                                if not item["capped"] and not before_rows[item["uid"]]["capped"]]
             validation_after = evaluation["validation"]["predictions"]
+            if {item["uid"] for item in validation_after} != set(before_validation):
+                raise RuntimeError(f"Seed {seed}, {method}: validation IDs differ from the initial model")
             row = {
                 "seed": seed, "method": method,
                 "test_macro_accuracy": sum(evaluation["test"]["by_topic"].values()) / len(config.topics),
@@ -91,7 +108,7 @@ def run() -> None:
                 ) / max(1, sum(baseline_topic.values()))
                 row[f"initially_correct_test_{topic}"] = sum(baseline_topic.values())
             rows.append(row)
-    destination = output / "comparison.csv"
+    destination = output / filename
     with destination.open("w", newline="", encoding="utf-8-sig") as stream:
         writer = csv.DictWriter(stream, fieldnames=list(rows[0]))
         writer.writeheader()

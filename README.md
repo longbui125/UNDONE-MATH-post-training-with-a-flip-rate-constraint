@@ -1,6 +1,6 @@
 # Hậu huấn luyện GRPO với ràng buộc tỷ lệ đúng thành sai
 
-Dự án hỏi liệu một mô hình ngôn ngữ tổng quát có thể học thêm toán bằng GRPO mà ít làm sai những bài trước đó nó giải đúng hơn hay không. Thử nghiệm dùng [Qwen2.5-1.5B-Instruct](https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct). Kết quả seed 42 đã có; đây vẫn là pilot, chưa đủ để kết luận phương pháp tốt hơn một cách ổn định.
+Dự án hỏi liệu một mô hình ngôn ngữ tổng quát có thể học thêm toán bằng GRPO mà ít làm sai những bài trước đó nó giải đúng hơn hay không. Thử nghiệm dùng [Qwen2.5-1.5B-Instruct](https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct). Seed 42 đánh giá bốn nhánh; seed 43 và 44 lặp lại cặp GRPO và GRPO + ràng buộc. Đây vẫn là pilot, chưa đủ để kết luận phương pháp tốt hơn một cách ổn định.
 
 ## Baseline đã chốt
 
@@ -20,9 +20,9 @@ Phương pháp ràng buộc đánh giá một anchor ban đầu đúng mỗi bư
 
 ## Dữ liệu, ngân sách và giới hạn kết luận
 
-[Config mặc định](configs/general_math_baseline.json) dùng 4 chủ đề từ revision cố định của `HuggingFaceH4/MATH`: đại số, hình học, lý thuyết số, tổ hợp và xác suất. Mỗi chủ đề có 16 train, 16 anchor, 20 validation và 40 held-out test: tổng **64/64/80/160** bài. Có **1 seed (42)**, **64 bước mỗi nhánh**, 4 rollout/group, 2 policy epochs. Train, đánh giá và kiểm tra anchor đều cho sinh tối đa **1024 token**, cao hơn 2,67 lần mức 384 token của pilot trước. Gold anchor dùng giới hạn tổng prompt + lời giải là 1536 token. Tất cả nhánh dùng cùng trần 1024; tỷ lệ chạm trần được lưu và báo cáo.
+[Config mặc định](configs/general_math_baseline.json) dùng 4 chủ đề từ revision cố định của `HuggingFaceH4/MATH`: đại số, hình học, lý thuyết số, tổ hợp và xác suất. Mỗi chủ đề có 16 train, 16 anchor, 20 validation và 40 held-out test: tổng **64/64/80/160** bài. Config gốc đóng băng seed 42; [run_replication.py](run_replication.py) dùng thêm seed 43 và 44 cho hai nhánh chính. Mỗi nhánh có **64 bước**, 4 rollout/group, 2 policy epochs. Train, đánh giá và kiểm tra anchor đều cho sinh tối đa **1024 token**, cao hơn 2,67 lần mức 384 token của pilot trước. Gold anchor dùng giới hạn tổng prompt + lời giải là 1536 token. Tất cả nhánh dùng cùng trần 1024; tỷ lệ chạm trần được lưu và báo cáo.
 
-Paper CoKL dùng trần sinh 8192 token trong thực nghiệm chính; **1024 token không phải cấu hình gốc của paper**. Đây là ngân sách local trên RTX 3060 6 GB. Lượt chạy seed 42 hoàn tất trong **18 giờ 29 phút** tính cả chuẩn bị, train và đánh giá; riêng train bốn nhánh khoảng **12 giờ 16 phút**. Một seed và 64 bước chỉ đủ cho **baseline thăm dò**, chưa đủ để khẳng định cải thiện có ý nghĩa thống kê.
+Paper CoKL dùng trần sinh 8192 token trong thực nghiệm chính; **1024 token không phải cấu hình gốc của paper**. Đây là ngân sách local trên RTX 3060 6 GB. Lượt chạy seed 42 hoàn tất trong **18 giờ 29 phút** tính cả chuẩn bị, train và đánh giá; riêng train bốn nhánh khoảng **12 giờ 16 phút**. Lượt lặp seed 43–44 mất thêm **11 giờ 53 phút** tính cả train và đánh giá. Ba seed và 64 bước mỗi nhánh chỉ đủ cho **baseline thăm dò**, chưa đủ để khẳng định cải thiện có ý nghĩa thống kê.
 
 **Đây là subset MATH có đáp án nguyên, không phải benchmark MATH đầy đủ.** Verifier hiện xác minh số nguyên cuối trong `\boxed{...}`; phân số, biểu thức và tập hợp chưa được hỗ trợ. Split được đóng băng và kiểm tra trùng đề. `selection_audit` trong `splits.json` lưu số câu bị loại vì kiểu đáp án, trùng hoặc prompt quá dài. Độ dài lời giải mẫu chỉ lọc tập anchor cần gold loss; train, validation và test không bị lọc theo độ dài lời giải mẫu. Bài test bị chạm trần vẫn nằm trong metric chính; notebook có phân tích subset không bị chạm trần riêng, chỉ để chẩn đoán.
 
@@ -38,7 +38,19 @@ Ba nhánh GRPO dùng cùng RL objective cơ bản. `grpo_reference_kl` dùng h�
 | CoKL-GRPO | 45 (28,13%) | 10 | 8 | 7 giờ 14 phút |
 | GRPO + ràng buộc | 50 (31,25%) | 7 | 10 | 2 giờ 25 phút |
 
-So với GRPO, ràng buộc làm sai ít hơn 3 bài vốn đúng nhưng cũng sửa đúng ít hơn 2 bài vốn sai; chênh lệch accuracy ròng là **1/160 bài**. Trên cùng 151 bài test không bị chạm trần ở bất kỳ nhánh nào, GRPO đúng 47 bài và có 9 ca đúng → sai; nhánh ràng buộc đúng 50 bài và có 6 ca đúng → sai. Phân tích này chỉ để kiểm tra ảnh hưởng của cắt token vì tập 151 bài được chọn theo đầu ra. Tỷ lệ đúng → sai của nhánh ràng buộc trên toàn test vẫn là **7/47 = 14,9%**, cao hơn mục tiêu 10% đặt cho anchor; ràng buộc mềm không được xem là đã đạt mục tiêu cứng. [Bảng kết quả gọn](results/seed42_summary.csv) và [notebook có biểu đồ](visualize_results.ipynb) lưu kết quả để xem lại. Adapter, dự đoán chi tiết và model cache nằm trong `outputs/` hoặc `hf_cache/` trên máy chạy, không đưa lên Git.
+So với GRPO, ràng buộc làm sai ít hơn 3 bài vốn đúng nhưng cũng sửa đúng ít hơn 2 bài vốn sai; chênh lệch accuracy ròng là **1/160 bài**. Trên cùng 151 bài test không bị chạm trần ở bất kỳ nhánh nào, GRPO đúng 47 bài và có 9 ca đúng → sai; nhánh ràng buộc đúng 50 bài và có 6 ca đúng → sai. Phân tích này chỉ để kiểm tra ảnh hưởng của cắt token vì tập 151 bài được chọn theo đầu ra. Tỷ lệ đúng → sai của nhánh ràng buộc trên toàn test vẫn là **7/47 = 14,9%**, cao hơn mục tiêu 10% đặt cho anchor; ràng buộc mềm không được xem là đã đạt mục tiêu cứng. [Bảng seed 42](results/seed42_summary.csv) và [notebook có biểu đồ](visualize_results.ipynb) lưu kết quả để xem lại. Adapter, dự đoán chi tiết và model cache nằm trong `outputs/` hoặc `hf_cache/` trên máy chạy, không đưa lên Git.
+
+## Kết quả lặp lại trên seed 42–44
+
+Hai nhánh chính dùng cùng model gốc (47/160 đúng), cùng split và cùng trần sinh. Mỗi seed train lại **độc lập** từ checkpoint gốc, không train nối tiếp. Bảng dưới là accuracy trên toàn bộ 160 bài test và số bài trong 47 bài model gốc giải đúng bị chuyển thành sai:
+
+| Seed | GRPO đúng /160 | Ràng buộc đúng /160 | GRPO đúng → sai | Ràng buộc đúng → sai | GRPO sai → đúng | Ràng buộc sai → đúng |
+|---|---:|---:|---:|---:|---:|---:|
+| 42 | 49 | 50 | 10 | 7 | 12 | 10 |
+| 43 | 44 | 45 | 8 | 10 | 5 | 8 |
+| 44 | 45 | 50 | 11 | 9 | 9 | 12 |
+
+Nhánh ràng buộc hơn GRPO về accuracy ở cả ba seed, trung bình **30,21% so với 28,75%**. Nhưng khả năng giảm đúng → sai **không ổn định**: seed 43 có 10 ca flip, nhiều hơn GRPO 2 ca. Thời gian train cộng ba seed của nhánh ràng buộc khoảng **1,79 lần** GRPO. Các seed dùng lại cùng 160 câu test, nên không diễn giải tổng số lượt đánh giá như các câu hỏi độc lập. [CSV chi tiết](results/seed_replication_comparison.csv) giữ cả seed 43; [notebook](visualize_results.ipynb) đặt biểu đồ đủ ba seed làm kết quả chính. Biểu đồ gộp riêng 42+44 chỉ là góc nhìn **thăm dò được chọn sau khi đã xem seed 43**, không dùng để khẳng định phương pháp giảm flip ổn định.
 
 ## Chạy trong VS Code
 
@@ -53,6 +65,16 @@ Chọn Python của môi trường `tf_gpu`. Không sửa CUDA hay TensorFlow. C
 
 Hoặc chạy [run_experiment.py](run_experiment.py) cho toàn bộ theo thứ tự. Nếu cần thay model hoặc ngân sách, tạo `run_name` mới trước khi chuẩn bị split.
 
+### Kiểm chứng thêm seed 43 và 44
+
+Sau khi run seed 42 hoàn tất, chỉ cần chạy [run_replication.py](run_replication.py) một lần trong VS Code với cùng môi trường `tf_gpu`. File này chạy tuần tự GRPO và GRPO + ràng buộc ở seed 43, rồi ở seed 44; sau đó tự đánh giá, so sánh và in bảng. Kết quả mới nằm cạnh run gốc trong `outputs/general_math_paper_baselines_1024_v1/seed_43`, `seed_44`, `seed_replication_comparison.csv` và `seed_replication_timing.json`. Cuối cùng chạy lại các cell trong [visualize_results.ipynb](visualize_results.ipynb) để xem phần biểu đồ ba seed ở cuối notebook. Không chạy lại `prepare_math_data.py` hay `run_experiment.py` cho lượt này.
+
+Hai seed mới đều bắt đầu từ **cùng model gốc**, cùng các tập đã đóng băng (64 train, 64 anchor, 80 validation, 160 test), cùng hyperparameter và 64 bước; trong mỗi seed, hai phương pháp dùng cùng thứ tự bài. Mỗi chủ đề có 16 bài train khác nhau; thứ tự bài và lượt lấy mẫu thay đổi theo seed. `seed_replication_plan.json` lưu lịch bài chính xác và kiểm tra các seed thực sự có thứ tự khác nhau. Log mới ghi thêm số lời giải khác nhau trong mỗi group, cùng `mixed_group_rate` để đánh giá độ đa dạng khi chạy. Model gốc và tập anchor đúng ban đầu được dùng lại; CoKL không chạy trong lượt kiểm chứng hai phương pháp chính. Các nhánh hoàn thành được bỏ qua khi chạy lại file sau gián đoạn; nhánh dở sẽ chạy lại từ đầu.
+
+Trong dữ liệu đã đóng băng, thứ tự câu train khác seed 42 ở **53/64 vị trí** cho seed 43 và **58/64 vị trí** cho seed 44; hai seed mới khác nhau ở **61/64 vị trí**. Tập anchor model gốc giải đúng chỉ có 7 đại số, 2 hình học, 4 lý thuyết số và 4 tổ hợp/xác suất; đây vẫn là hạn chế của phép đo ràng buộc theo chủ đề, không thể được sửa bằng cách chỉ đổi seed.
+
+Lượt chạy seed 43–44 đã hoàn tất trong **11,89 giờ** tính cả train và đánh giá. Đây là kiểm tra lặp lại trên ba seed và cùng một test đã xem ở seed 42; không diễn giải nó như một bộ test hoàn toàn mới hoặc bằng chứng phương pháp đã vượt mọi đối chứng.
+
 ## Cách đọc kết quả
 
-Chỉ số chính là **accuracy trên toàn bộ test**, **số và tỷ lệ đúng → sai trên những câu model gốc giải đúng**, và **số sai → đúng**. Xem thêm từng chủ đề, mức yếu nhất, tỷ lệ chạm trần, tỷ lệ không có `\boxed{...}`, mixed-group rate, số optimizer update, rollout tokens, CoKL reference/current tokens, anchor-check tokens và thời gian. Muốn nói ràng buộc có lợi thì cần cho thấy nó giảm flip mà không chặn phần lớn tiến bộ accuracy, so với cả GRPO và hai đối chứng có paper. Với một seed, mọi kết luận chỉ là tín hiệu ban đầu.
+Chỉ số chính là **accuracy trên toàn bộ test**, **số và tỷ lệ đúng → sai trên những câu model gốc giải đúng**, và **số sai → đúng**. Xem thêm từng chủ đề, mức yếu nhất, tỷ lệ chạm trần, tỷ lệ không có `\boxed{...}`, mixed-group rate, số optimizer update, rollout tokens, CoKL reference/current tokens, anchor-check tokens và thời gian. Muốn nói ràng buộc có lợi thì cần cho thấy nó giảm flip mà không chặn phần lớn tiến bộ accuracy. Ba seed hiện cho tín hiệu accuracy nhưng chưa cho thấy giảm flip ổn định; hai đối chứng có paper chỉ được chạy ở seed 42.

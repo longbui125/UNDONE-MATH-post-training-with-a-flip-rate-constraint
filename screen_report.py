@@ -12,9 +12,9 @@ _sys_path.insert(0, str(ROOT / "src"))
 from plmco.config import active_config
 
 
-def run() -> None:
+def run(*, filename: str = "comparison.csv", show_baseline_timing: bool = True) -> None:
     config = active_config(ROOT)
-    comparison = ROOT / "outputs" / config.run_name / "comparison.csv"
+    comparison = ROOT / "outputs" / config.run_name / filename
     with comparison.open(encoding="utf-8-sig", newline="") as stream:
         rows = list(csv.DictReader(stream))
     print(f"Experiment: {config.run_name}")
@@ -34,7 +34,7 @@ def run() -> None:
     if constrained and all(float(row["retention_active_updates"]) == 0 for row in constrained):
         print("Constraint was never active; do not attribute any difference to it.")
     timing = comparison.parent / "run_timing.json"
-    if timing.exists():
+    if show_baseline_timing and timing.exists():
         hours = json.loads(timing.read_text(encoding="utf-8"))["total_seconds"] / 3600
         print(f"Whole pipeline including preparation and evaluation: {hours:.2f} hours")
     print("Compare macro accuracy and flips together; a lower flip rate alone is insufficient.")
