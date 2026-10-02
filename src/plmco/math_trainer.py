@@ -12,7 +12,7 @@ from .cokl import backward_cokl
 from .math_data import MathCase
 from .math_model import completion_logprobs, evaluate_case, gold_solution_loss, sample_group
 from .modeling import load_trainable_model, trainable_parameters
-from .retention import update_multiplier
+from .retention import RecentAnchorFeedback, update_multiplier
 from .utils import append_jsonl, set_seed, write_json
 
 METHODS = ("grpo", "grpo_reference_kl", "cokl_grpo", "flip_constrained_grpo")
@@ -75,6 +75,7 @@ def train_method(method: str, config: ExperimentConfig, tokenizer,
     # An interrupted arm restarts from its seed; partial logs are not resumed.
     (folder / "train_metrics.jsonl").unlink(missing_ok=True)
     (folder / "rollouts.jsonl").unlink(missing_ok=True)
+    (folder / "initial_anchor_audit.json").unlink(missing_ok=True)
     set_seed(seed)
     model = load_trainable_model(config)
     parameters = trainable_parameters(model)
@@ -104,6 +105,27 @@ def train_method(method: str, config: ExperimentConfig, tokenizer,
              "cokl_groups": 0, "cokl_current_correct": 0,
              "cokl_generated_tokens": 0, "retention_eval_tokens": 0}
     started = time.time()
+    feedback = RecentAnchorFeedback(config)
+    if config.align_kbit_evaluation:
+        # A zero-initialized LoRA must solve the anchors BEFORE any optimizer update.
+        # Reject loader/precision drift instead of calling it training regression.
+        audit = []
+        for monitored_topic in eligible_topics:
+            for anchor in correct_anchors[monitored_topic]:
+                observed = evaluate_case(model, tokenizer, anchor, config,
+                                         max_new_tokens=config.retention_eval_tokens)
+                audit.append(observed)
+        write_json(folder / "initial_anchor_audit.json", {
+            "predictions": audit, "seconds": time.time() - started,
+            "tokens": sum(row["tokens"] for row in audit),
+            "mismatches": [row["uid"] for row in audit if not row["correct"]],
+        })
+        if any(not row["correct"] for row in audit):
+            raise RuntimeError("Fresh trainable model fails baseline-correct anchors before "
+                               "training. See initial_anchor_audit.json; RL was not started.")
+        stats["initial_anchor_audit_tokens"] = sum(row["tokens"] for row in audit)
+        # Anchor inference must not shift the random stream used for RL rollouts.
+        set_seed(seed)
     for step in range(config.max_steps):
         topic_index = step % len(config.topics)
         topic = config.topics[topic_index]
@@ -111,6 +133,9 @@ def train_method(method: str, config: ExperimentConfig, tokenizer,
         retention_topic = None
         retention_case = None
         flipped = None
+        feedback_wrong = feedback_total = None
+        retention_weight_used = 0.0
+        retention_gold_loss = None
         if method == "flip_constrained_grpo":
             retention_topic = eligible_topics[step % len(eligible_topics)]
             pool = correct_anchors[retention_topic]
@@ -127,6 +152,11 @@ def train_method(method: str, config: ExperimentConfig, tokenizer,
             stats["retention_checks"] += 1
             stats["retention_flips"] += flipped
             stats["retention_eval_tokens"] += observed["tokens"]
+            if config.retention_feedback == "immediate_unique":
+                multipliers[retention_topic], feedback_wrong, feedback_total = feedback.observe(
+                    retention_topic, retention_case.uid, bool(flipped),
+                    multipliers[retention_topic])
+                stats["dual_adjustments"] += 1
 
         cokl_case = None
         cokl_rollouts = []
@@ -190,9 +220,11 @@ def train_method(method: str, config: ExperimentConfig, tokenizer,
                               config.cokl_beta, config.cokl_is_epsilon)
             retention_weight = (multipliers[retention_topic]
                                 if method == "flip_constrained_grpo" else 0.0)
+            retention_weight_used = retention_weight
             if retention_weight > 0:
-                (retention_weight * gold_solution_loss(
-                    model, tokenizer, retention_case, config)).backward()
+                anchor_loss = gold_solution_loss(model, tokenizer, retention_case, config)
+                retention_gold_loss = float(anchor_loss.detach())
+                (retention_weight * anchor_loss).backward()
                 stats["retention_active_updates"] += 1
             if (mixed or retention_weight > 0
                     or method == "grpo_reference_kl" and config.reference_kl_beta > 0
@@ -200,7 +232,8 @@ def train_method(method: str, config: ExperimentConfig, tokenizer,
                 torch.nn.utils.clip_grad_norm_(parameters, config.max_grad_norm)
                 optimizer.step()
                 stats["updates"] += 1
-        if method == "flip_constrained_grpo" and (step + 1) % config.retention_window_steps == 0:
+        if (method == "flip_constrained_grpo" and config.retention_feedback == "window"
+                and (step + 1) % config.retention_window_steps == 0):
             for monitored_topic in eligible_topics:
                 counts = window[monitored_topic]
                 if counts["total"]:
@@ -218,6 +251,11 @@ def train_method(method: str, config: ExperimentConfig, tokenizer,
             "retention_topic": retention_topic,
             "retention_uid": retention_case.uid if retention_case else None,
             "retention_flipped": flipped,
+            "retention_feedback_wrong": feedback_wrong,
+            "retention_feedback_total": feedback_total,
+            "retention_weight_used": retention_weight_used,
+            "retention_gold_loss": retention_gold_loss,
+            "optimizer_updates": stats["updates"],
             "retention_multipliers": multipliers.copy(),
             "retention_checks": stats["retention_checks"],
             "retention_flips": stats["retention_flips"],
@@ -245,6 +283,8 @@ def train_method(method: str, config: ExperimentConfig, tokenizer,
         "retention_cumulative": cumulative,
         "final_multipliers": multipliers,
         "eligible_topics": eligible_topics,
+        "align_kbit_evaluation": config.align_kbit_evaluation,
+        "retention_feedback": config.retention_feedback,
     })
     del model
     gc.collect()

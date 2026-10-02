@@ -47,6 +47,9 @@ class ExperimentConfig:
     cokl_beta: float = 0.001
     cokl_reference_group_size: int = 4
     cokl_is_epsilon: float = 0.2
+    align_kbit_evaluation: bool = False
+    retention_feedback: str = "window"
+    retention_recent_checks: int = 4
 
     @classmethod
     def from_json(cls, path: str | Path) -> "ExperimentConfig":
@@ -86,6 +89,12 @@ class ExperimentConfig:
             raise ValueError("retention_window_steps must cover every topic")
         if result.retention_eval_tokens < 1:
             raise ValueError("retention_eval_tokens must be positive")
+        if not isinstance(result.align_kbit_evaluation, bool):
+            raise ValueError("align_kbit_evaluation must be a boolean")
+        if result.retention_feedback not in {"window", "immediate_unique"}:
+            raise ValueError("Unknown retention_feedback")
+        if result.retention_recent_checks < 1:
+            raise ValueError("retention_recent_checks must be positive")
         return result
 
 

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from collections import OrderedDict
 from pathlib import Path
 
 import torch
@@ -13,16 +14,44 @@ from .modeling import load_evaluation_model
 from .utils import write_json
 
 
+class RecentAnchorFeedback:
+    """Latest observed outcome per distinct anchor; repeated IDs get one vote.
+
+    Observations are a small, stale estimate, not a full simultaneous anchor audit.
+    Each topic's multiplier is adjusted BEFORE the current optimizer update.
+    """
+
+    def __init__(self, config: ExperimentConfig):
+        self.config = config
+        self.latest = {topic: OrderedDict() for topic in config.topics}
+
+    def observe(self, topic: str, uid: str, flipped: bool,
+                current: float) -> tuple[float, int, int]:
+        recent = self.latest[topic]
+        recent.pop(uid, None)
+        recent[uid] = int(flipped)
+        while len(recent) > self.config.retention_recent_checks:
+            recent.popitem(last=False)
+        wrong, total = sum(recent.values()), len(recent)
+        return update_multiplier(current, wrong, total, self.config), wrong, total
+
+
 def prepare_retention_anchors(config: ExperimentConfig, tokenizer,
                               cases: list[MathCase], path: Path) -> dict[str, list[str]]:
     """Freeze which separate anchor problems the untouched model solves correctly."""
     if not torch.cuda.is_available():
         raise RuntimeError("Anchor scan and training require a CUDA GPU")
     expected = {case.uid for case in cases}
+    numerical_setup = {"model_name": config.model_name, "dtype": config.dtype,
+                       "quantization_4bit": config.quantization_4bit,
+                       "align_kbit_evaluation": config.align_kbit_evaluation,
+                       "max_new_tokens": config.retention_eval_tokens}
     if path.exists():
         payload = json.loads(path.read_text(encoding="utf-8"))
         if set(payload["predictions"]) != expected:
             raise RuntimeError("Retention anchors do not match frozen splits")
+        if config.align_kbit_evaluation and payload.get("numerical_setup") != numerical_setup:
+            raise RuntimeError("Anchor cache has a different precision setup; do not reuse v1 predictions")
     else:
         model = load_evaluation_model(config, None)
         predictions = {}
@@ -33,8 +62,8 @@ def prepare_retention_anchors(config: ExperimentConfig, tokenizer,
             )
             if index % 16 == 0 or index == len(cases):
                 print(f"[retention baseline] {index}/{len(cases)}", flush=True)
-        write_json(path, {"predictions": predictions})
-        payload = {"predictions": predictions}
+        payload = {"predictions": predictions, "numerical_setup": numerical_setup}
+        write_json(path, payload)
         del model
         if torch.cuda.is_available():
             torch.cuda.empty_cache()

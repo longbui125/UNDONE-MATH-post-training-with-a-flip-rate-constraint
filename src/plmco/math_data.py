@@ -90,7 +90,14 @@ def _solution_fits(case: MathCase, tokenizer, config: ExperimentConfig) -> bool:
 
 
 def config_digest(config: ExperimentConfig) -> str:
-    return hashlib.sha256(json.dumps(asdict(config), sort_keys=True).encode()).hexdigest()
+    payload = asdict(config)
+    # Preserve the hash of already frozen v1 experiments when using legacy defaults.
+    legacy_defaults = {"align_kbit_evaluation": False,
+                       "retention_feedback": "window", "retention_recent_checks": 4}
+    for key, default in legacy_defaults.items():
+        if payload[key] == default:
+            payload.pop(key)
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
 
 def prepare_splits(config: ExperimentConfig, tokenizer, path: Path) -> dict[str, list[MathCase]]:

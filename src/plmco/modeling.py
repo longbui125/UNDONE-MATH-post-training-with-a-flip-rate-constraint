@@ -75,6 +75,12 @@ def load_trainable_model(config: ExperimentConfig):
 
 def load_evaluation_model(config: ExperimentConfig, adapter: str | None):
     model = _base_model(config)
+    if config.quantization_4bit and config.align_kbit_evaluation:
+        # PEFT training casts non-quantized embeddings/norms/head to FP32.
+        # Use the SAME numerical base for anchor scan, initial and trained evaluation.
+        # No checkpointing or gradient hooks are needed for inference.
+        model = prepare_model_for_kbit_training(
+            model, use_gradient_checkpointing=False)
     if adapter is not None:
         model = PeftModel.from_pretrained(model, adapter)
     if not config.quantization_4bit:

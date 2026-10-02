@@ -82,6 +82,7 @@ def run(*, seeds: tuple[int, ...] | None = None,
                 "rollout_tokens": summary["stats"].get("rollout_tokens", 0),
                 "cokl_generated_tokens": summary["stats"].get("cokl_generated_tokens", 0),
                 "retention_eval_tokens": summary["stats"].get("retention_eval_tokens", 0),
+                "initial_anchor_audit_tokens": summary["stats"].get("initial_anchor_audit_tokens", 0),
                 "cokl_reference_buffer_tokens": (reference_meta.get("generated_tokens", 0)
                                                   if method == "cokl_grpo" else 0),
                 "cokl_reference_preparation_seconds": (reference_meta.get("preparation_seconds", 0)
