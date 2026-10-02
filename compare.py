@@ -11,6 +11,7 @@ from sys import path as _sys_path
 _sys_path.insert(0, str(ROOT / "src"))
 from plmco.config import active_config
 from plmco.math_trainer import METHODS
+from plmco.paired_statistics import paired_bootstrap_summary
 
 
 def run(*, seeds: tuple[int, ...] | None = None,
@@ -31,11 +32,17 @@ def run(*, seeds: tuple[int, ...] | None = None,
     reference_meta = (json.loads(reference_path.read_text(encoding="utf-8"))
                       if reference_path.exists() else {})
     rows = []
+    paired_evaluations = {}
+    paired_initial = None
     for seed in seeds:
         baseline_seed = seed if initial_seed is None else initial_seed
         initial = json.loads((output / f"seed_{baseline_seed}" / "initial" / "evaluation.json").read_text(encoding="utf-8"))
         before_rows = {row["uid"]: row for row in initial["test"]["predictions"]}
         before = {uid: row["correct"] for uid, row in before_rows.items()}
+        if config.retention_feedback == "immediate_unique":
+            if paired_initial is not None and before != {row["uid"]: row["correct"] for row in paired_initial}:
+                raise RuntimeError("Paired statistics require the same initial predictions across seeds")
+            paired_initial = initial["test"]["predictions"]
         before_validation = {row["uid"]: row["correct"]
                              for row in initial["validation"]["predictions"]}
         for method in ("initial", *methods):
@@ -45,6 +52,8 @@ def run(*, seeds: tuple[int, ...] | None = None,
             summary = (json.loads((folder / "summary.json").read_text(encoding="utf-8"))
                        if method != "initial" else {"seconds": 0, "stats": {}})
             after = evaluation["test"]["predictions"]
+            if method in ("grpo", "flip_constrained_grpo"):
+                paired_evaluations.setdefault(seed, {})[method] = after
             if {item["uid"] for item in after} != set(before):
                 raise RuntimeError(f"Seed {seed}, {method}: test IDs differ from the initial model")
             paired_uncapped = [item for item in after
@@ -115,6 +124,14 @@ def run(*, seeds: tuple[int, ...] | None = None,
         writer.writeheader()
         writer.writerows(rows)
     print(f"Comparison: {destination}")
+    if config.retention_feedback == "immediate_unique" and {"grpo", "flip_constrained_grpo"} <= set(methods):
+        statistics = paired_bootstrap_summary(paired_initial, paired_evaluations, config.topics)
+        statistics_path = output / "paired_statistics.csv"
+        with statistics_path.open("w", newline="", encoding="utf-8-sig") as stream:
+            writer = csv.DictWriter(stream, fieldnames=list(statistics[0]))
+            writer.writeheader()
+            writer.writerows(statistics)
+        print(f"Paired uncertainty estimates: {statistics_path}")
 
 
 if __name__ == "__main__":

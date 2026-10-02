@@ -2,11 +2,11 @@
 
 Dành cho trình bày: [báo cáo chi tiết (PDF)](reports/bao_cao_grpo_rang_buoc_flip.pdf) và [bản nguồn có thể chỉnh sửa](reports/bao_cao_grpo_rang_buoc_flip.md).
 
-**Cập nhật kiểm tra seed 43 (02/10/2026):** phát hiện loader đánh giá v1 và loader train QLoRA khác precision. Một anchor đã đổi đáp án ngay khi chuẩn bị QLoRA, **trước bất kỳ optimizer update nào**. Vì vậy phần “flip trên anchor do training” của v1 bị nhiễu bởi loader; các bảng cũ bên dưới được giữ như kết quả lịch sử, chưa chứng minh giảm quên thuần túy. Xem [chẩn đoán](reports/seed43_diagnosis.md). Lượt v2 chạy lại cả GRPO và ràng buộc trên seed 43/45 với loader đồng nhất, không dùng lại baseline hay adapter v1.
+**Cập nhật kiểm tra seed 43 (02/10/2026):** phát hiện loader đánh giá v1 và loader train QLoRA khác precision. Một anchor đã đổi đáp án ngay khi chuẩn bị QLoRA, **trước bất kỳ optimizer update nào**. Vì vậy phần “flip trên anchor do training” của v1 bị nhiễu bởi loader; các bảng cũ bên dưới được giữ như kết quả lịch sử, chưa chứng minh giảm quên thuần túy. Xem [chẩn đoán](reports/seed43_diagnosis.md). Lượt v2 chạy lại cả GRPO và ràng buộc trên seed 42/43/44 với loader đồng nhất, không dùng lại baseline hay adapter v1.
 
 Dự án hỏi liệu một mô hình ngôn ngữ tổng quát có thể học thêm toán bằng GRPO mà ít làm sai những bài trước đó nó giải đúng hơn hay không. Thử nghiệm dùng [Qwen2.5-1.5B-Instruct](https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct). Seed 42 đánh giá bốn nhánh; seed 43 và 44 lặp lại cặp GRPO và GRPO + ràng buộc. Đây vẫn là pilot, chưa đủ để kết luận phương pháp tốt hơn một cách ổn định.
 
-## Baseline đã chốt
+## Baseline v1 đã chạy (kết quả lịch sử)
 
 Mọi nhánh bắt đầu từ cùng checkpoint và dùng cùng train/validation/test, thứ tự bài, seed, group size, số bước và giới hạn sinh.
 
@@ -22,7 +22,7 @@ CoKL **cần** một buffer đáp án đúng do model gốc sinh sẵn, như pap
 
 Phương pháp ràng buộc đánh giá một anchor ban đầu đúng mỗi bước. Sau cửa sổ 32 bước, hệ số bảo vệ riêng từng chủ đề được cập nhật theo `λ ← clip(λ + 0.30 × (flip_rate − 0.10), 0, 1)`. Loss train là GRPO loss cộng `λ × gold-solution loss` của anchor. Đây là ràng buộc **mềm trên anchor**, không bảo đảm cứng rằng test sẽ không có flip. Model, anchor và verifier giống nhau giữa các nhánh; mỗi paper method được ghi đúng cơ chế và phần điều chỉnh local của nó.
 
-## Dữ liệu, ngân sách và giới hạn kết luận
+## Dữ liệu, ngân sách và giới hạn kết luận của v1
 
 [Config mặc định](configs/general_math_baseline.json) dùng 4 chủ đề từ revision cố định của `HuggingFaceH4/MATH`: đại số, hình học, lý thuyết số, tổ hợp và xác suất. Mỗi chủ đề có 16 train, 16 anchor, 20 validation và 40 held-out test: tổng **64/64/80/160** bài. Config gốc đóng băng seed 42; [run_replication.py](run_replication.py) dùng thêm seed 43 và 44 cho hai nhánh chính. Mỗi nhánh có **64 bước**, 4 rollout/group, 2 policy epochs. Train, đánh giá và kiểm tra anchor đều cho sinh tối đa **1024 token**, cao hơn 2,67 lần mức 384 token của pilot trước. Gold anchor dùng giới hạn tổng prompt + lời giải là 1536 token. Tất cả nhánh dùng cùng trần 1024; tỷ lệ chạm trần được lưu và báo cáo.
 
@@ -58,27 +58,49 @@ Nhánh ràng buộc hơn GRPO về accuracy ở cả ba seed, trung bình **30,2
 
 ## Chạy trong VS Code
 
-### Lượt đang chuẩn bị: chạy lại seed 43 và thêm seed 45
+### Lượt đang chuẩn bị: chạy lại seed 42, 43 và 44 bằng v2
 
 Chọn Python `C:\Users\slywi\anaconda3\envs\tf_gpu\python.exe`, rồi:
 
-1. Chạy **[run_replication.py](run_replication.py)** bằng Run Python File. File tự chọn [general_math_feedback_v2.json](configs/general_math_feedback_v2.json), sao chép đúng các câu đã đóng băng, quét lại anchor, train hai nhánh ở seed 43, đánh giá và lập bảng; sau đó làm tương tự seed 45. Không cần chạy lại các file prepare/train/evaluate/compare riêng cho lượt này.
-2. Mở **[visualize_results.ipynb](visualize_results.ipynb)** và Run All. Phần cuối **Feedback v2 — seeds 43 and 45** hiển thị accuracy, đúng → sai, sai → đúng, thời gian, từng chủ đề và trọng số thực sự được dùng. Khi mới xong seed 43, phần này vẫn xem được kết quả tạm thời của seed đó.
+1. Chạy **[run_replication.py](run_replication.py)** bằng Run Python File. File tự chọn [general_math_feedback_v2.json](configs/general_math_feedback_v2.json), tạo và đóng băng các tập mới lớn hơn, loại mọi đề của split v1, quét lại anchor, train và đánh giá cặp GRPO/ràng buộc v2 ở seed 42, rồi 43, rồi 44; lập bảng sau mỗi seed. Không cần chạy lại các file prepare/train/evaluate/compare riêng cho lượt này.
+2. Mở **[visualize_results.ipynb](visualize_results.ipynb)** và Run All. Phần cuối **Feedback v2 — seeds 42, 43 and 44** hiển thị accuracy, đúng → sai, sai → đúng, thời gian, từng chủ đề và trọng số thực sự được dùng. Khi mới xong một hoặc hai seed, phần này vẫn xem được kết quả tạm thời, ghi rõ các seed đã hoàn tất.
 
-Kết quả mới nằm trong `outputs/general_math_feedback_1024_v2/`: `seed_43/`, `seed_45/`, `comparison.csv`, `retention_baseline.json`, `seed_replication_plan.json` và `seed_replication_timing.json`. Kết quả v1 ở folder cũ được giữ nguyên. Chạy lại file sẽ bỏ qua nhánh hoàn thành; nhánh dở phải chạy lại từ đầu, **không resume optimizer**. Hai nhánh và hai seed đều khởi tạo độc lập từ model gốc, không nối tiếp adapter seed 43 sang 45.
+Kết quả mới nằm trong `outputs/general_math_feedback_1024_v2_expanded/`: `seed_42/`, `seed_43/`, `seed_44/`, `comparison.csv`, `retention_baseline.json`, `seed_replication_plan.json` và `seed_replication_timing.json`. Kết quả v1 ở folder cũ được giữ nguyên. Chạy lại file sẽ bỏ qua nhánh hoàn thành; nhánh dở phải chạy lại từ đầu, **không resume optimizer**. Tổng cộng 6 nhánh train (3 seed × 2 method), mỗi nhánh khởi tạo độc lập từ model gốc. Không train nối tiếp giữa các seed. Folder v2 seed 43/45 đã chuẩn bị trước đó cũng được giữ riêng; không dùng artifact của folder đó cho lượt này.
 
 Các thay đổi có chủ đích của v2:
 
 - **Đồng nhất precision:** scan anchor, initial và đánh giá adapter đều dùng bước chuẩn bị k-bit giống train (các tham số không quantize được đưa lên FP32). Quét lại base-correct anchor và đánh giá lại initial; không dùng 47 bài initial-correct hay 17 anchor của v1 làm mẫu số mới.
 - **Kiểm tra trước train ở cả hai nhánh:** zero-initialized LoRA phải giải đúng các anchor đã chọn. Nếu không, dừng và ghi `initial_anchor_audit.json` thay vì tính chênh lệch loader là quên kiến thức. Token và thời gian audit được lưu riêng; thời gian summary đã bao gồm audit.
 - **Phản hồi ngay trong bước hiện tại:** sau mỗi lần kiểm tra anchor, cập nhật hệ số của chủ đề đó **trước** khi backward. Không còn 32 bước đầu bỏ mặc các tín hiệu flip, hoặc cập nhật ở bước cuối rồi không dùng.
-- **Đếm bài khác nhau:** dùng trạng thái kiểm tra gần nhất của tối đa 4 UID anchor khác nhau/chủ đề; kiểm tra lại một UID sẽ thay thế trạng thái cũ, không nhân số phiếu của bài đó. Đây là ước lượng từ các lần kiểm tra không đồng thời, chưa phải tỷ lệ của toàn bộ anchor ở checkpoint hiện tại. Nếu chủ đề chỉ có 1–2 anchor đúng, độ phủ vẫn ít.
+- **Đếm bài khác nhau:** dùng trạng thái kiểm tra gần nhất của tối đa 16 UID anchor khác nhau/chủ đề; kiểm tra lại một UID sẽ thay thế trạng thái cũ, không nhân số phiếu của bài đó. Đây là ước lượng từ các lần kiểm tra không đồng thời, chưa phải tỷ lệ của toàn bộ anchor ở checkpoint hiện tại. Nếu chủ đề chỉ có 1–2 anchor đúng, độ phủ vẫn ít.
 
-Công thức mới vẫn là `λ_topic ← clip(λ_topic + 0.30 × (recent_flip_rate_topic − 0.10), 0, 1)` và `loss = GRPO_loss + λ_topic × gold_solution_loss`. Loss gold là negative mean log-probability trên token lời giải mẫu, không tính token đề bài. Chỉ thời điểm cập nhật và cách ước lượng feedback được sửa; GRPO objective, reward, dataset, learning rate, 64 bước, 4 rollout/group, 2 policy epochs và trần 1024 token được giữ. Đây vẫn là ràng buộc mềm, không có bảo đảm mọi bài test sẽ không flip.
+Công thức mới vẫn là `λ_topic ← clip(λ_topic + 0.30 × (recent_flip_rate_topic − 0.10), 0, 1)` và `loss = GRPO_loss + λ_topic × gold_solution_loss`. Loss gold là negative mean log-probability trên token lời giải mẫu, không tính token đề bài. Chỉ thời điểm cập nhật và cách ước lượng feedback được sửa; GRPO objective, reward, dataset nguồn, learning rate, 4 rollout/group, 2 policy epochs và trần 1024 token được giữ. Bản mở rộng có 256 bước và feedback tối đa 16 bài khác nhau/chủ đề. Đây vẫn là ràng buộc mềm, không có bảo đảm mọi bài test sẽ không flip.
 
 Log mới ghi `retention_weight_used`, `retention_feedback_wrong/total`, `retention_gold_loss` (epoch cuối), `optimizer_updates`. Chi phí anchor generation và audit được báo cáo thêm, không chỉ rollout tokens. Hai nhánh có cùng ngân sách lấy mẫu RL; số optimizer update có thể khác vì nhánh ràng buộc vẫn có anchor loss khi group không có advantage. Đây là khác biệt cơ chế cần báo cáo, không phải so sánh bằng cùng mọi chi phí.
 
-Không sửa phương pháp bằng cách chọn seed cho kết quả đẹp: seed 43 cũ vẫn được giữ, seed 43 mới là kiểm tra sau sửa, seed 45 là seed bổ sung đã chọn trước khi có kết quả. Chúng dùng lại cùng test đã xem; không gọi là test hoàn toàn mới. Chỉ kết luận có tiến triển nếu flip giảm mà accuracy/gains không bị chặn quá nhiều, và tính cả thời gian/token tăng thêm. **Chưa chạy train v2 và chưa khẳng định seed 43 đã tốt hơn.**
+Chạy đủ cả 42, 43 và 44, không loại seed theo kết quả. Ba seed dùng cùng một phương pháp v2 và cùng precision; GRPO cũng chạy lại cho cả ba seed. Giữ các kết quả v1 riêng, không gộp với v2. Tập mở rộng loại toàn bộ đề trong train/anchor/validation/test v1 bằng nội dung chuẩn hóa; vẫn không bảo đảm không nhiễm dữ liệu pretraining của model. Chỉ kết luận có tiến triển nếu flip giảm mà accuracy/gains không bị chặn quá nhiều, và tính cả thời gian/token tăng thêm. **Chưa chạy train lượt ba seed v2.** Thí nghiệm này trả lời v2 có lợi hơn GRPO hay không; chưa chứng minh v2 tốt hơn v1 vì không chạy thêm v1 với loader đã sửa.
+
+
+### Quy mô mở rộng để đánh giá v2
+
+| Tập / ngân sách | Mỗi chủ đề | Tổng |
+|---|---:|---:|
+| Train | 64 | 256 |
+| Anchor ứng viên | 128 | 512 |
+| Validation | 40 | 160 |
+| Test mới | 160 | 640 |
+| Bước train / nhánh | — | 256 |
+| RL rollout / nhánh | — | 1024 |
+
+Ba seed × hai method = 6 nhánh, tổng 6144 rollout RL. Mỗi nhánh dùng hết 256 đề train khác nhau một lượt; mỗi group có 4 đáp án và 2 policy epochs. Anchor ứng viên **không phải** 512 bài base model đã giải đúng: phải quét lại để xác định số đủ điều kiện. `retention_anchor_coverage.json` ghi số thực tế và kích thước feedback hữu dụng theo chủ đề; code cảnh báo nếu ít hơn 16 bài đúng. Feedback vẫn cập nhật ngay, trong giai đoạn đầu sẽ chưa đủ 16 quan sát khác nhau. Các trạng thái được thu thập ở các bước khác nhau nên vẫn có độ trễ.
+
+Split v1 có 368 bài tổng cộng được loại khỏi lượt mở rộng bằng nội dung đề chuẩn hóa. Dữ liệu mới lấy từ cùng revision MATH, dùng data seed 20261002, kiểm tra trùng giữa các tập và đóng băng trước train. Bốn chủ đề có cùng số bài; verifier vẫn chỉ hỗ trợ đáp án nguyên. Chọn 160 test/chủ đề vì hình học có khoảng 220 bài đáp án nguyên hợp lệ trong audit cũ, trong đó 40 đã được dùng ở test v1; code kiểm tra lại số khả dụng thực tế thay vì âm thầm giảm mẫu. Không tuning bằng test sau khi xem kết quả seed đầu tiên.
+
+`paired_statistics.csv` báo chênh lệch **ràng buộc trừ GRPO** và khoảng bootstrap 95% cho accuracy và flip rate, trên toàn test và từng chủ đề. Dấu mong muốn: accuracy dương, flip rate âm. Bootstrap 2000 lần giữ cặp dự đoán cùng câu giữa hai method, lấy mẫu câu theo chủ đề; bảng gộp còn lấy mẫu lại seed, dùng cùng mẫu câu cho các seed. Vì cùng 640 câu được dùng ở cả ba seed, **không xem đó là 1920 câu độc lập**. Các khoảng là ước lượng thăm dò với chỉ ba training seed; không phải bảo đảm statistical power hay bằng chứng tổng quát.
+
+Nếu khoảng chênh lệch flip còn chứa 0, chưa kết luận được giảm flip rõ ràng dù trung bình đẹp hơn. Accuracy cần được đọc cùng flip, số sai → đúng và chi phí. Quy mô này phù hợp để đánh giá xu hướng trong subset hiện tại, không bảo đảm phát hiện mức cải thiện 1–2 điểm phần trăm hay kết luận cho MATH đầy đủ. Với khoảng 200 câu base-correct, độ bất định của flip rate vẫn có thể vài điểm phần trăm; phải dùng mẫu số đo được, không cố định con số dự đoán đó.
+
+Lượt mở rộng dự kiến kéo dài nhiều chục giờ trên GPU hiện tại, gồm scan 512 anchor, 6 nhánh train và đánh giá 800 câu/checkpoint. Thời gian phụ thuộc độ dài sinh và mức ràng buộc; không đặt wall-clock cutoff làm các nhánh train khác ngân sách. Nhánh dở vẫn phải train lại từ đầu nếu bị ngắt. Adapter và output cũ được giữ riêng.
 
 ### Quy trình v1 đã hoàn thành (lưu để tái lập)
 
@@ -95,7 +117,7 @@ Hoặc chạy [run_experiment.py](run_experiment.py) cho toàn bộ theo thứ t
 
 ### Kiểm chứng thêm seed 43 và 44
 
-Lượt lặp v1 đã chạy tuần tự GRPO và GRPO + ràng buộc ở seed 43 và 44, rồi đánh giá, so sánh và in bảng. Kết quả nằm cạnh run gốc trong `outputs/general_math_paper_baselines_1024_v1/seed_43`, `seed_44`, `seed_replication_comparison.csv` và `seed_replication_timing.json`. Notebook giữ biểu đồ ba seed và góc nhìn thăm dò 42+44. **`run_replication.py` hiện đã chuyển sang v2 seed 43/45**, không chạy lại v1 khi bấm Run.
+Lượt lặp v1 đã chạy tuần tự GRPO và GRPO + ràng buộc ở seed 43 và 44, rồi đánh giá, so sánh và in bảng. Kết quả nằm cạnh run gốc trong `outputs/general_math_paper_baselines_1024_v1/seed_43`, `seed_44`, `seed_replication_comparison.csv` và `seed_replication_timing.json`. Notebook giữ biểu đồ ba seed và góc nhìn thăm dò 42+44. **`run_replication.py` hiện đã chuyển sang v2 seed 42/43/44**, không chạy lại v1 khi bấm Run.
 
 Hai seed mới đều bắt đầu từ **cùng model gốc**, cùng các tập đã đóng băng (64 train, 64 anchor, 80 validation, 160 test), cùng hyperparameter và 64 bước; trong mỗi seed, hai phương pháp dùng cùng thứ tự bài. Mỗi chủ đề có 16 bài train khác nhau; thứ tự bài và lượt lấy mẫu thay đổi theo seed. `seed_replication_plan.json` lưu lịch bài chính xác và kiểm tra các seed thực sự có thứ tự khác nhau. Log mới ghi thêm số lời giải khác nhau trong mỗi group, cùng `mixed_group_rate` để đánh giá độ đa dạng khi chạy. Model gốc và tập anchor đúng ban đầu được dùng lại; CoKL không chạy trong lượt kiểm chứng hai phương pháp chính. Các nhánh hoàn thành được bỏ qua khi chạy lại file sau gián đoạn; nhánh dở sẽ chạy lại từ đầu.
 

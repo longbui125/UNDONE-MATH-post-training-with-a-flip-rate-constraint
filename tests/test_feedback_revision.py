@@ -29,7 +29,7 @@ class FeedbackRevisionTests(unittest.TestCase):
         self.revised = ExperimentConfig.from_json(ROOT / "configs/general_math_feedback_v2.json")
 
     def test_first_flip_activates_immediately_and_duplicate_ids_have_one_vote(self):
-        feedback = RecentAnchorFeedback(self.revised)
+        feedback = RecentAnchorFeedback(replace(self.revised, retention_recent_checks=4))
         weight, wrong, total = feedback.observe("geometry", "a", True, 0.0)
         self.assertGreater(weight, 0)
         self.assertEqual((wrong, total), (1, 1))
@@ -55,7 +55,24 @@ class FeedbackRevisionTests(unittest.TestCase):
                 if expected:
                     prepare.assert_called_once_with(base, use_gradient_checkpointing=False)
 
-    def test_revision_reuses_questions_without_overwriting_source_or_reusing_predictions(self):
+    def test_expanded_revision_excludes_inspected_questions_and_preserves_source(self):
+        class Tokenizer:
+            eos_token = "<eos>"
+
+            def apply_chat_template(self, messages, **_kwargs):
+                return " ".join(message["content"] for message in messages)
+
+            def __call__(self, text, **_kwargs):
+                return SimpleNamespace(input_ids=text.split())
+
+        config = replace(self.revised, train_per_topic=1, anchor_per_topic=1,
+                         validation_per_topic=1, test_per_topic=1, max_steps=4)
+
+        def source_rows(_dataset, topic, split, **_kwargs):
+            return [{"problem": f"  {split}\n{topic}  ", "solution": r"\boxed{1}"}] + [
+                {"problem": f"new {split} {topic} {index}", "solution": rf"\boxed{{{index}}}"}
+                for index in range(6)]
+
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             write_json(root / "configs/general_math_baseline.json", json.loads(
@@ -71,14 +88,19 @@ class FeedbackRevisionTests(unittest.TestCase):
             source = root / "outputs" / self.legacy.run_name / "splits.json"
             write_json(source, payload)
             before = source.read_bytes()
-            splits = prepare_feedback_revision(root, self.revised)
-            destination = root / "outputs" / self.revised.run_name
-            self.assertEqual(splits, load_splits(self.revised, destination / "splits.json"))
+            with patch("datasets.load_dataset", side_effect=source_rows):
+                splits = prepare_feedback_revision(root, config, Tokenizer())
+            destination = root / "outputs" / config.run_name
+            self.assertEqual(splits, load_splits(config, destination / "splits.json"))
             self.assertEqual(source.read_bytes(), before)
             self.assertFalse((destination / "retention_baseline.json").exists())
-            self.assertEqual(splits, prepare_feedback_revision(root, self.revised))
+            old_problems = {row["problem"] for rows in payload["splits"].values() for row in rows}
+            self.assertFalse(old_problems & {case.problem for cases in splits.values() for case in cases})
+            audit = json.loads((destination / "splits.json").read_text())["selection_audit"]
+            self.assertTrue(all(row["train"]["previously_inspected_excluded"] == 1 for row in audit.values()))
+            self.assertEqual(splits, prepare_feedback_revision(root, config, Tokenizer()))
             with self.assertRaises(ValueError):
-                prepare_feedback_revision(root, replace(self.revised, learning_rate=1e-4))
+                prepare_feedback_revision(root, replace(config, learning_rate=1e-4), Tokenizer())
 
     def test_new_anchor_scan_rejects_legacy_precision_cache(self):
         case = MathCase("a", "algebra", "p", 1, "1")
@@ -96,7 +118,7 @@ class FeedbackRevisionTests(unittest.TestCase):
              patch.object(run_replication.ExperimentConfig, "from_json", return_value=self.revised), \
              patch.object(run_replication, "prepare_feedback_revision", return_value={"anchor": []}), \
              patch.object(run_replication, "load_tokenizer", return_value=object()), \
-             patch.object(run_replication, "prepare_retention_anchors", return_value={}), \
+             patch.object(run_replication, "prepare_retention_anchors", return_value={topic: [] for topic in self.revised.topics}), \
              patch.object(run_replication, "train_method") as train, \
              patch.object(run_replication, "evaluate") as evaluate, \
              patch.object(run_replication, "compare") as compare, \
@@ -104,11 +126,12 @@ class FeedbackRevisionTests(unittest.TestCase):
              patch.dict("os.environ"):
             run_replication.run()
             self.assertEqual([(call.args[5], call.args[0]) for call in train.call_args_list],
-                             [(43, "grpo"), (43, "flip_constrained_grpo"),
-                              (45, "grpo"), (45, "flip_constrained_grpo")])
-            self.assertEqual([call.kwargs["include_initial"] for call in evaluate.call_args_list], [True, False])
-            self.assertEqual([call.kwargs["seeds"] for call in compare.call_args_list], [(43,), (43, 45)])
-            self.assertTrue(all(call.kwargs["initial_seed"] == 43 for call in compare.call_args_list))
+                             [(42, "grpo"), (42, "flip_constrained_grpo"),
+                              (43, "grpo"), (43, "flip_constrained_grpo"),
+                              (44, "grpo"), (44, "flip_constrained_grpo")])
+            self.assertEqual([call.kwargs["include_initial"] for call in evaluate.call_args_list], [True, False, False])
+            self.assertEqual([call.kwargs["seeds"] for call in compare.call_args_list], [(42,), (42, 43), (42, 43, 44)])
+            self.assertTrue(all(call.kwargs["initial_seed"] == 42 for call in compare.call_args_list))
 
     def test_trainer_uses_feedback_on_same_step_and_stops_on_initial_mismatch(self):
         config = replace(self.revised, max_steps=4, policy_epochs=1)

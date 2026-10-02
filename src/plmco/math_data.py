@@ -100,10 +100,16 @@ def config_digest(config: ExperimentConfig) -> str:
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
 
-def prepare_splits(config: ExperimentConfig, tokenizer, path: Path) -> dict[str, list[MathCase]]:
+def prepare_splits(config: ExperimentConfig, tokenizer, path: Path, *,
+                   excluded_cases: list[MathCase] | None = None) -> dict[str, list[MathCase]]:
     from datasets import load_dataset
 
+    excluded = {" ".join(case.problem.split()).casefold() for case in (excluded_cases or [])}
+    exclusion_hash = hashlib.sha256(json.dumps(sorted(excluded)).encode()).hexdigest()
     if path.exists():
+        cached = json.loads(path.read_text(encoding="utf-8"))
+        if excluded and cached.get("excluded_problems_sha256") != exclusion_hash:
+            raise RuntimeError("Previously inspected problem exclusions changed; use a new run_name")
         return load_splits(config, path)
     splits: dict[str, list[MathCase]] = {name: [] for name in ("train", "anchor", "validation", "test")}
     data_audit = {}
@@ -112,6 +118,14 @@ def prepare_splits(config: ExperimentConfig, tokenizer, path: Path) -> dict[str,
         source_test = load_dataset(DATASET_ID, topic, split="test", revision=REVISION)
         train_pool, train_audit = _eligible(source_train, topic, "train", tokenizer, config)
         test_pool, test_audit = _eligible(source_test, topic, "test", tokenizer, config)
+        train_audit["previously_inspected_excluded"] = sum(
+            " ".join(case.problem.split()).casefold() in excluded for case in train_pool)
+        test_audit["previously_inspected_excluded"] = sum(
+            " ".join(case.problem.split()).casefold() in excluded for case in test_pool)
+        train_pool = [case for case in train_pool
+                      if " ".join(case.problem.split()).casefold() not in excluded]
+        test_pool = [case for case in test_pool
+                     if " ".join(case.problem.split()).casefold() not in excluded]
         train_problems = {" ".join(case.problem.split()).casefold() for case in train_pool}
         test_pool = [case for case in test_pool
                      if " ".join(case.problem.split()).casefold() not in train_problems]
@@ -149,6 +163,9 @@ def prepare_splits(config: ExperimentConfig, tokenizer, path: Path) -> dict[str,
         "selection_audit": data_audit,
         "splits": {name: [asdict(case) for case in rows] for name, rows in splits.items()},
     }
+    if excluded:
+        payload["excluded_problems_sha256"] = exclusion_hash
+        payload["excluded_problem_count"] = len(excluded)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return splits

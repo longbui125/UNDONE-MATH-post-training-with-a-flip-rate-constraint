@@ -1,10 +1,11 @@
 {
   "model_name": "Qwen/Qwen2.5-1.5B-Instruct",
-  "run_name": "general_math_feedback_1024_v2",
-  "data_seed": 20260928,
+  "run_name": "general_math_feedback_1024_v2_expanded",
+  "data_seed": 20261002,
   "training_seeds": [
+    42,
     43,
-    45
+    44
   ],
   "topics": [
     "algebra",
@@ -12,11 +13,11 @@
     "number_theory",
     "counting_and_probability"
   ],
-  "train_per_topic": 16,
-  "anchor_per_topic": 16,
-  "validation_per_topic": 20,
-  "test_per_topic": 40,
-  "max_steps": 64,
+  "train_per_topic": 64,
+  "anchor_per_topic": 128,
+  "validation_per_topic": 40,
+  "test_per_topic": 160,
+  "max_steps": 256,
   "group_size": 4,
   "max_prompt_tokens": 512,
   "max_completion_tokens": 1024,
@@ -50,5 +51,5 @@
   "cokl_is_epsilon": 0.2,
   "align_kbit_evaluation": true,
   "retention_feedback": "immediate_unique",
-  "retention_recent_checks": 4
+  "retention_recent_checks": 16
 }

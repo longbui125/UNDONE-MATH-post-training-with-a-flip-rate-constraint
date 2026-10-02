@@ -28,8 +28,8 @@ Anchor `geometry:train:350` hỏi giá trị tan(225°), đáp án đúng là 1.
 - Giữ nguyên câu train/anchor/validation/test, model, reward, ngân sách RL và trần token.
 - Đồng nhất numerical base khi scan anchor, initial, train và evaluate adapter. Không dùng lại initial predictions hay anchor-correct v1.
 - Kiểm tra tất cả anchor được chọn trên fresh zero-LoRA trước train ở cả hai nhánh. Nếu khác baseline, dừng và lưu audit.
-- Cập nhật λ sau quan sát anchor và trước optimizer update của chính bước đó. Feedback dùng lần quan sát gần nhất của tối đa 4 bài khác nhau theo chủ đề. Không đếm một UID nhiều lần trong cùng ước lượng; vẫn có độ trễ do các anchor không được kiểm tra đồng thời.
+- Cập nhật λ sau quan sát anchor và trước optimizer update của chính bước đó. Bản v2 ban đầu dùng tối đa 4 bài khác nhau theo chủ đề; lượt mở rộng đã tăng lên 16. Không đếm một UID nhiều lần trong cùng ước lượng; vẫn có độ trễ do các anchor không được kiểm tra đồng thời.
 - Lưu trọng số thực dùng, mẫu số feedback, anchor gold loss, số update và chi phí audit.
-- Train lại độc lập cặp GRPO/ràng buộc ở seed 43 và 45, lưu version mới. Không chỉ rerun nhánh ràng buộc rồi so với GRPO v1 có chế độ đánh giá khác.
+- Kế hoạch đã chốt lại: train độc lập cặp GRPO/ràng buộc v2 ở cả seed 42, 43 và 44, lưu lượt mới. Không chỉ rerun nhánh ràng buộc rồi so với GRPO v1 có chế độ đánh giá khác.
 
-Đây là sửa tính nhất quán của baseline và phản hồi chậm, không phải một bảo đảm giảm đúng → sai. Độ phủ anchor thấp và gold loss chỉ là surrogate vẫn còn. Seed 45 là training seed bổ sung, nhưng cùng test cũ đã xem; cần ghi đúng tính chất này trong kết luận.
+Đây là sửa tính nhất quán của baseline và phản hồi chậm, không phải một bảo đảm giảm đúng → sai. Gold loss vẫn chỉ là surrogate. Kế hoạch hiện tại đã mở rộng thành 256 train, 512 anchor ứng viên, 160 validation và 640 test, loại toàn bộ đề của split v1. Ba seed dùng chung test mới, không tính các lượt đánh giá đó như những câu độc lập. Lượt này đánh giá v2 so với GRPO, chưa phải ablation v2 so với v1 dưới cùng precision.

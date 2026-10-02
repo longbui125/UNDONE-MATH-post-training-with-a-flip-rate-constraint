@@ -7,7 +7,7 @@ from collections import Counter
 from pathlib import Path
 
 from .config import ExperimentConfig
-from .math_data import MathCase, config_digest, load_splits
+from .math_data import MathCase, config_digest, load_splits, prepare_splits
 from .math_trainer import _ordered_cases
 from .utils import write_json
 
@@ -18,40 +18,34 @@ REPLICATION_METHODS = ("grpo", "flip_constrained_grpo")
 COMPARISON_FILE = "seed_replication_comparison.csv"
 
 
-def prepare_feedback_revision(root: Path, config: ExperimentConfig) -> dict[str, list[MathCase]]:
-    """Reuse exact v1 questions, never its numerically different base predictions.
+def prepare_feedback_revision(root: Path, config: ExperimentConfig, tokenizer) -> dict[str, list[MathCase]]:
+    """Freeze larger disjoint splits, excluding all inspected v1 problem texts.
 
-    Only explicitly declared method/precision changes are allowed. Frozen source
-    outputs are read-only; the revised experiment has its own provenance and hash.
+    Model, reward-related settings and optimizer settings remain matched to v1.
+    Declared split sizes, budget and feedback settings may change. Source outputs
+    are read-only; the revised experiment has its own provenance and hash.
     """
     source_config = ExperimentConfig.from_json(root / "configs" / "general_math_baseline.json")
     permitted = {"run_name", "training_seeds", "align_kbit_evaluation",
-                 "retention_feedback", "retention_recent_checks"}
+                 "retention_feedback", "retention_recent_checks", "data_seed",
+                 "train_per_topic", "anchor_per_topic", "validation_per_topic",
+                 "test_per_topic", "max_steps"}
     previous, revised = asdict(source_config), asdict(config)
     unexpected = [key for key in previous if previous[key] != revised[key] and key not in permitted]
     if unexpected:
         raise ValueError(f"Unmatched revision settings: {unexpected}")
-    if (config.run_name == source_config.run_name or config.training_seeds != [43, 45]
+    if (config.run_name == source_config.run_name or config.training_seeds != [42, 43, 44]
             or not config.align_kbit_evaluation
             or config.retention_feedback != "immediate_unique"):
-        raise ValueError("Revision requires a new run, seeds 43/45 and aligned immediate feedback")
+        raise ValueError("Revision requires a new run, seeds 42/43/44 and aligned immediate feedback")
     source = root / "outputs" / source_config.run_name / "splits.json"
-    splits = load_splits(source_config, source)
-    payload = _read_json(source)
-    payload["config_sha256"] = config_digest(config)
-    payload["revision_source"] = {
-        "run_name": source_config.run_name,
-        "config_sha256": config_digest(source_config),
-        "note": "Identical questions; baseline and anchors must be re-evaluated with aligned QLoRA precision.",
-    }
+    previous_splits = load_splits(source_config, source)
+    excluded = [case for rows in previous_splits.values() for case in rows]
     output = root / "outputs" / config.run_name
     destination = output / "splits.json"
-    if destination.exists():
-        if _read_json(destination) != payload:
-            raise RuntimeError("Existing revision splits/provenance differ; refusing to overwrite")
-        load_splits(config, destination)
-    else:
-        write_json(destination, payload)
+    splits = prepare_splits(config, tokenizer, destination, excluded_cases=excluded)
+    if config.max_steps != len(splits["train"]):
+        raise ValueError("Expanded run must visit every distinct train question once per method")
     schedules = {}
     for seed in config.training_seeds:
         ordered = _ordered_cases(splits["train"], config.topics, seed + 11)
@@ -63,8 +57,14 @@ def prepare_feedback_revision(root: Path, config: ExperimentConfig) -> dict[str,
     plan = {"source_run": source_config.run_name,
             "config_sha256": config_digest(config), "methods": list(REPLICATION_METHODS),
             "training_seeds": config.training_seeds,
+            "split_counts": {name: len(cases) for name, cases in splits.items()},
+            "steps_per_method": config.max_steps,
+            "rollouts_per_step": config.group_size,
+            "retention_recent_checks": config.retention_recent_checks,
             "train_question_order": schedules,
             "initial_evaluation_reused": False,
+            "excluded_source_config_sha256": config_digest(source_config),
+            "excluded_source_problem_count": len(excluded),
             "old_seed_43_is_exploratory_diagnostic": True}
     plan_path = output / "seed_replication_plan.json"
     if plan_path.exists() and _read_json(plan_path) != plan:

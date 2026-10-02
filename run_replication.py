@@ -1,4 +1,4 @@
-"""VS Code: rerun matched GRPO/constraint on seeds 43 and 45 with corrected feedback."""
+"""VS Code: expanded matched GRPO/constraint v2 on seeds 42, 43 and 44."""
 from __future__ import annotations
 
 import json
@@ -28,12 +28,22 @@ def run() -> None:
     os.environ["PLMCO_CONFIG"] = "general_math_feedback_v2.json"
     config = ExperimentConfig.from_json(ROOT / "configs" / os.environ["PLMCO_CONFIG"])
     output = ROOT / "outputs" / config.run_name
-    splits = prepare_feedback_revision(ROOT, config)
     completed = False
     try:
         tokenizer = load_tokenizer(config.model_name)
+        splits = prepare_feedback_revision(ROOT, config, tokenizer)
         retention_ids = prepare_retention_anchors(
             config, tokenizer, splits["anchor"], output / "retention_baseline.json")
+        coverage = {topic: {"candidate_anchors": sum(case.topic == topic for case in splits["anchor"]),
+                            "initially_correct_anchors": len(retention_ids[topic]),
+                            "maximum_distinct_feedback": min(len(retention_ids[topic]), config.retention_recent_checks)}
+                    for topic in config.topics}
+        write_json(output / "retention_anchor_coverage.json", coverage)
+        for topic, counts in coverage.items():
+            print(f"[anchor coverage/{topic}] {counts}", flush=True)
+            if counts["maximum_distinct_feedback"] < config.retention_recent_checks:
+                print(f"[anchor coverage/{topic}] Fewer correct anchors than the requested feedback window; "
+                      "interpret topic-level retention cautiously.", flush=True)
         for seed in config.training_seeds:
             for method in REPLICATION_METHODS:
                 train_method(method, config, tokenizer, splits,
