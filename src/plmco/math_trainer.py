@@ -1,4 +1,4 @@
-"""Matched GRPO, published KL baselines, and the flip-rate constraint."""
+"""Matched GRPO and the window-based per-topic flip-rate constraint."""
 from __future__ import annotations
 
 import gc
@@ -8,14 +8,13 @@ from pathlib import Path
 import torch
 
 from .config import ExperimentConfig
-from .cokl import backward_cokl
 from .math_data import MathCase
 from .math_model import completion_logprobs, evaluate_case, gold_solution_loss, sample_group
 from .modeling import load_trainable_model, trainable_parameters
-from .retention import RecentAnchorFeedback, update_multiplier
+from .retention import update_multiplier
 from .utils import append_jsonl, set_seed, write_json
 
-METHODS = ("grpo", "grpo_reference_kl", "cokl_grpo", "flip_constrained_grpo")
+METHODS = ("grpo", "flip_constrained_grpo")
 
 
 def _ordered_cases(cases: list[MathCase], topics: list[str], seed: int) -> dict[str, list[MathCase]]:
@@ -41,8 +40,7 @@ def _rl_loss(model, rollouts, advantages, config: ExperimentConfig) -> torch.Ten
     return torch.stack(terms).mean()
 
 
-def _backward_policy(model, rollouts, advantages, config: ExperimentConfig,
-                     use_reference_kl: bool) -> None:
+def _backward_policy(model, rollouts, advantages, config: ExperimentConfig) -> None:
     """Accumulate one rollout at a time so long completions do not stack graphs."""
     for index, rollout in enumerate(rollouts):
         current = completion_logprobs(model, rollout.ids, rollout.prompt_length)
@@ -53,19 +51,13 @@ def _backward_policy(model, rollouts, advantages, config: ExperimentConfig,
             clipped = ratio.clamp(1 - config.clip_epsilon, 1 + config.clip_epsilon)
             advantage = advantages[index]
             loss = -torch.minimum(ratio * advantage, clipped * advantage).mean()
-        if use_reference_kl and config.reference_kl_beta > 0:
-            reference = rollout.reference_logprobs.to(current.device)
-            log_ratio = reference - current
-            kl = (log_ratio.clamp(-20, 20).exp() - log_ratio - 1).mean()
-            loss = (loss if loss is not None else 0) + config.reference_kl_beta * kl
         if loss is not None:
             (loss / len(rollouts)).backward()
 
 
 def train_method(method: str, config: ExperimentConfig, tokenizer,
                  splits: dict[str, list[MathCase]], folder: Path, seed: int,
-                 retention_ids: dict[str, list[str]],
-                 cokl_buffer: dict[str, list] | None = None) -> None:
+                 retention_ids: dict[str, list[str]]) -> None:
     if method not in METHODS:
         raise ValueError(method)
     if (folder / "summary.json").exists() and (folder / "adapter" / "adapter_config.json").exists():
@@ -88,12 +80,6 @@ def train_method(method: str, config: ExperimentConfig, tokenizer,
     eligible_topics = [topic for topic in config.topics if correct_anchors[topic]]
     if method == "flip_constrained_grpo" and not eligible_topics:
         raise RuntimeError("No initially correct retention anchors")
-    cokl_cases = {topic: [case for case in anchors[topic]
-                          if cokl_buffer is not None and case.uid in cokl_buffer]
-                  for topic in config.topics}
-    cokl_topics = [topic for topic in config.topics if cokl_cases[topic]]
-    if method == "cokl_grpo" and not cokl_topics:
-        raise RuntimeError("CoKL has no reference-correct anchor prompts")
     multipliers = {topic: 0.0 for topic in config.topics}
     window = {topic: {"wrong": 0, "total": 0} for topic in config.topics}
     cumulative = {topic: {"wrong": 0, "total": 0} for topic in config.topics}
@@ -102,10 +88,8 @@ def train_method(method: str, config: ExperimentConfig, tokenizer,
              "unique_completions": 0,
              "retention_checks": 0, "retention_flips": 0,
              "retention_active_updates": 0, "dual_adjustments": 0,
-             "cokl_groups": 0, "cokl_current_correct": 0,
-             "cokl_generated_tokens": 0, "retention_eval_tokens": 0}
+             "retention_eval_tokens": 0}
     started = time.time()
-    feedback = RecentAnchorFeedback(config)
     if config.align_kbit_evaluation:
         # A zero-initialized LoRA must solve the anchors BEFORE any optimizer update.
         # Reject loader/precision drift instead of calling it training regression.
@@ -152,28 +136,6 @@ def train_method(method: str, config: ExperimentConfig, tokenizer,
             stats["retention_checks"] += 1
             stats["retention_flips"] += flipped
             stats["retention_eval_tokens"] += observed["tokens"]
-            if config.retention_feedback == "immediate_unique":
-                multipliers[retention_topic], feedback_wrong, feedback_total = feedback.observe(
-                    retention_topic, retention_case.uid, bool(flipped),
-                    multipliers[retention_topic])
-                stats["dual_adjustments"] += 1
-
-        cokl_case = None
-        cokl_rollouts = []
-        if method == "cokl_grpo":
-            cokl_topic = cokl_topics[step % len(cokl_topics)]
-            pool = cokl_cases[cokl_topic]
-            cokl_case = pool[(step // len(cokl_topics)) % len(pool)]
-            cokl_rollouts = sample_group(model, tokenizer, cokl_case, config)
-            stats["cokl_groups"] += 1
-            stats["cokl_generated_tokens"] += sum(item.length for item in cokl_rollouts)
-            current_correct = [item for item in cokl_rollouts if item.reward == 1.0]
-            stats["cokl_current_correct"] += len(current_correct)
-            with torch.no_grad():
-                for item in current_correct:
-                    item.old_logprobs = completion_logprobs(
-                        model, item.ids, item.prompt_length).detach().cpu()
-
         rollouts = sample_group(model, tokenizer, case, config)
         stats["sampled_groups"] += 1
         stats["rollout_tokens"] += sum(rollout.length for rollout in rollouts)
@@ -203,21 +165,11 @@ def train_method(method: str, config: ExperimentConfig, tokenizer,
         else:
             advantages = None
 
-        if method == "grpo_reference_kl":
-            with torch.no_grad(), model.disable_adapter():
-                for rollout in rollouts:
-                    rollout.reference_logprobs = completion_logprobs(
-                        model, rollout.ids, rollout.prompt_length).detach().cpu()
-
         for _ in range(config.policy_epochs):
             model.train()
             optimizer.zero_grad(set_to_none=True)
-            if mixed or method == "grpo_reference_kl":
-                _backward_policy(model, rollouts, advantages, config,
-                                 method == "grpo_reference_kl")
-            if method == "cokl_grpo" and config.cokl_beta > 0:
-                backward_cokl(model, cokl_buffer[cokl_case.uid], current_correct,
-                              config.cokl_beta, config.cokl_is_epsilon)
+            if mixed:
+                _backward_policy(model, rollouts, advantages, config)
             retention_weight = (multipliers[retention_topic]
                                 if method == "flip_constrained_grpo" else 0.0)
             retention_weight_used = retention_weight
@@ -226,9 +178,7 @@ def train_method(method: str, config: ExperimentConfig, tokenizer,
                 retention_gold_loss = float(anchor_loss.detach())
                 (retention_weight * anchor_loss).backward()
                 stats["retention_active_updates"] += 1
-            if (mixed or retention_weight > 0
-                    or method == "grpo_reference_kl" and config.reference_kl_beta > 0
-                    or method == "cokl_grpo" and config.cokl_beta > 0):
+            if mixed or retention_weight > 0:
                 torch.nn.utils.clip_grad_norm_(parameters, config.max_grad_norm)
                 optimizer.step()
                 stats["updates"] += 1
@@ -260,7 +210,6 @@ def train_method(method: str, config: ExperimentConfig, tokenizer,
             "retention_checks": stats["retention_checks"],
             "retention_flips": stats["retention_flips"],
             "retention_active_updates": stats["retention_active_updates"],
-            "cokl_generated_tokens": stats["cokl_generated_tokens"],
             "elapsed_seconds": time.time() - started,
         })
         if (step + 1) % config.log_every == 0 or step == 0:

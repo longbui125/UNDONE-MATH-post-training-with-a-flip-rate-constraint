@@ -10,7 +10,6 @@ sys.path.insert(0, str(ROOT / "src"))
 os.environ.setdefault("HF_HOME", str(ROOT / "hf_cache"))
 
 from plmco.config import active_config
-from plmco.cokl import prepare_reference_buffer
 from plmco.math_data import load_splits
 from plmco.math_trainer import METHODS, train_method
 from plmco.modeling import load_tokenizer
@@ -27,16 +26,10 @@ def run() -> None:
     tokenizer = load_tokenizer(config.model_name)
     retention_ids = prepare_retention_anchors(
         config, tokenizer, splits["anchor"], folder / "retention_baseline.json")
-    cokl_buffer = None
-    if "cokl_grpo" in METHODS:
-        cokl_buffer, metadata = prepare_reference_buffer(
-            config, tokenizer, splits["anchor"], folder / "cokl_reference_buffer.json")
-        print(f"[CoKL reference] {metadata}", flush=True)
     for seed in config.training_seeds:
         for method in METHODS:
             train_method(method, config, tokenizer, splits,
-                         folder / f"seed_{seed}" / method, seed, retention_ids,
-                         cokl_buffer)
+                         folder / f"seed_{seed}" / method, seed, retention_ids)
     print(f"Training complete: {folder}")
 
 

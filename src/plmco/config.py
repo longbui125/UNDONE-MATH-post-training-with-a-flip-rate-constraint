@@ -43,6 +43,7 @@ class ExperimentConfig:
     lora_targets: list[str]
     log_every: int
     quantization_4bit: bool = False
+    # Unused historical fields remain only to preserve the completed run's config hash.
     reference_kl_beta: float = 0.04
     cokl_beta: float = 0.001
     cokl_reference_group_size: int = 4
@@ -91,7 +92,7 @@ class ExperimentConfig:
             raise ValueError("retention_eval_tokens must be positive")
         if not isinstance(result.align_kbit_evaluation, bool):
             raise ValueError("align_kbit_evaluation must be a boolean")
-        if result.retention_feedback not in {"window", "immediate_unique"}:
+        if result.retention_feedback != "window":
             raise ValueError("Unknown retention_feedback")
         if result.retention_recent_checks < 1:
             raise ValueError("retention_recent_checks must be positive")
@@ -100,7 +101,7 @@ class ExperimentConfig:
 
 def active_config(root: Path) -> ExperimentConfig:
     """Select an immutable config for an experiment run."""
-    name = os.environ.get("PLMCO_CONFIG", "general_math_baseline.json")
+    name = os.environ.get("PLMCO_CONFIG", "math_retention.json")
     if Path(name).name != name or not name.endswith(".json"):
         raise ValueError("PLMCO_CONFIG must name a JSON file in configs/")
     return ExperimentConfig.from_json(root / "configs" / name)

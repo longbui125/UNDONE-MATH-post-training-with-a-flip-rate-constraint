@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-from collections import OrderedDict
 from pathlib import Path
 
 import torch
@@ -12,28 +11,6 @@ from .math_data import MathCase
 from .math_model import evaluate_case
 from .modeling import load_evaluation_model
 from .utils import write_json
-
-
-class RecentAnchorFeedback:
-    """Latest observed outcome per distinct anchor; repeated IDs get one vote.
-
-    Observations are a small, stale estimate, not a full simultaneous anchor audit.
-    Each topic's multiplier is adjusted BEFORE the current optimizer update.
-    """
-
-    def __init__(self, config: ExperimentConfig):
-        self.config = config
-        self.latest = {topic: OrderedDict() for topic in config.topics}
-
-    def observe(self, topic: str, uid: str, flipped: bool,
-                current: float) -> tuple[float, int, int]:
-        recent = self.latest[topic]
-        recent.pop(uid, None)
-        recent[uid] = int(flipped)
-        while len(recent) > self.config.retention_recent_checks:
-            recent.popitem(last=False)
-        wrong, total = sum(recent.values()), len(recent)
-        return update_multiplier(current, wrong, total, self.config), wrong, total
 
 
 def prepare_retention_anchors(config: ExperimentConfig, tokenizer,

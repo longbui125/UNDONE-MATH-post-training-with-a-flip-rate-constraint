@@ -18,7 +18,7 @@ def run(*, filename: str = "comparison.csv", show_baseline_timing: bool = True) 
     with comparison.open(encoding="utf-8-sig", newline="") as stream:
         rows = list(csv.DictReader(stream))
     print(f"Experiment: {config.run_name}")
-    print("seed method                  macro  flips  gains  capped(test/train)  capped-flips  RL/CoKL/anchor tokens  hours")
+    print("seed method                  macro  flips  gains  capped(test/train)  capped-flips  RL/anchor/audit tokens  hours")
     for row in rows:
         print(f"{row['seed']:>4} {row['method']:<23} "
               f"{float(row['test_macro_accuracy']):>5.1%} "
@@ -27,8 +27,8 @@ def run(*, filename: str = "comparison.csv", show_baseline_timing: bool = True) 
               f"{float(row['test_capped_rate']):>5.1%}/{float(row['train_capped_rate']):>5.1%} "
               f"{int(float(row['correct_to_wrong_capped_either'])):>12} "
               f"{int(float(row['rollout_tokens'])):>7}/"
-              f"{int(float(row['cokl_generated_tokens'])):>7}/"
-              f"{int(float(row['retention_eval_tokens'])):>7} "
+              f"{int(float(row['retention_eval_tokens'])):>7}/"
+              f"{int(float(row['initial_anchor_audit_tokens'])):>7} "
               f"{float(row['train_seconds']) / 3600:>5.2f}")
     constrained = [row for row in rows if row["method"] == "flip_constrained_grpo"]
     if constrained and all(float(row["retention_active_updates"]) == 0 for row in constrained):

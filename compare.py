@@ -28,9 +28,6 @@ def run(*, seeds: tuple[int, ...] | None = None,
         raise ValueError("Invalid comparison seeds or methods")
     if Path(filename).name != filename or not filename.endswith(".csv"):
         raise ValueError("Comparison filename must be a CSV in the run folder")
-    reference_path = output / "cokl_reference_buffer.json"
-    reference_meta = (json.loads(reference_path.read_text(encoding="utf-8"))
-                      if reference_path.exists() else {})
     rows = []
     paired_evaluations = {}
     paired_initial = None
@@ -39,7 +36,7 @@ def run(*, seeds: tuple[int, ...] | None = None,
         initial = json.loads((output / f"seed_{baseline_seed}" / "initial" / "evaluation.json").read_text(encoding="utf-8"))
         before_rows = {row["uid"]: row for row in initial["test"]["predictions"]}
         before = {uid: row["correct"] for uid, row in before_rows.items()}
-        if config.retention_feedback == "immediate_unique":
+        if config.align_kbit_evaluation:
             if paired_initial is not None and before != {row["uid"]: row["correct"] for row in paired_initial}:
                 raise RuntimeError("Paired statistics require the same initial predictions across seeds")
             paired_initial = initial["test"]["predictions"]
@@ -89,13 +86,8 @@ def run(*, seeds: tuple[int, ...] | None = None,
                 ) / max(1, sum(before_validation.values())),
                 "wrong_to_correct": sum(not before[item["uid"]] and item["correct"] for item in after),
                 "rollout_tokens": summary["stats"].get("rollout_tokens", 0),
-                "cokl_generated_tokens": summary["stats"].get("cokl_generated_tokens", 0),
                 "retention_eval_tokens": summary["stats"].get("retention_eval_tokens", 0),
                 "initial_anchor_audit_tokens": summary["stats"].get("initial_anchor_audit_tokens", 0),
-                "cokl_reference_buffer_tokens": (reference_meta.get("generated_tokens", 0)
-                                                  if method == "cokl_grpo" else 0),
-                "cokl_reference_preparation_seconds": (reference_meta.get("preparation_seconds", 0)
-                                                         if method == "cokl_grpo" else 0),
                 "mixed_group_rate": summary["stats"].get("mixed_groups", 0)
                 / max(1, summary["stats"].get("sampled_groups", 0)),
                 "train_capped_rate": summary["stats"].get("capped_rollouts", 0)
@@ -124,7 +116,7 @@ def run(*, seeds: tuple[int, ...] | None = None,
         writer.writeheader()
         writer.writerows(rows)
     print(f"Comparison: {destination}")
-    if config.retention_feedback == "immediate_unique" and {"grpo", "flip_constrained_grpo"} <= set(methods):
+    if config.align_kbit_evaluation and {"grpo", "flip_constrained_grpo"} <= set(methods):
         statistics = paired_bootstrap_summary(paired_initial, paired_evaluations, config.topics)
         statistics_path = output / "paired_statistics.csv"
         with statistics_path.open("w", newline="", encoding="utf-8-sig") as stream:

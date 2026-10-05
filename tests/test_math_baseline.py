@@ -11,18 +11,16 @@ import torch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from plmco.config import ExperimentConfig
-from plmco.cokl import backward_cokl, conditional_weights
 from plmco.math_data import (MathCase, _eligible, integer_answer,
                              last_boxed, load_splits, prepare_splits)
 from plmco.math_trainer import METHODS, _rl_loss
-from plmco.math_model import Rollout
 from plmco.retention import prepare_retention_anchors, update_multiplier
 
 
 class MathBaselineTests(unittest.TestCase):
     def test_grpo_loss_uses_mean_token_objective(self):
         config = replace(ExperimentConfig.from_json(
-            Path(__file__).resolve().parents[1] / "configs" / "general_math_baseline.json"),
+            Path(__file__).resolve().parents[1] / "configs" / "math_retention.json"),
             max_completion_tokens=4)
         rollout = SimpleNamespace(ids=None, prompt_length=0,
                                   old_logprobs=torch.zeros(2))
@@ -31,27 +29,10 @@ class MathBaselineTests(unittest.TestCase):
             ordinary = _rl_loss(None, [rollout], [torch.tensor(1.0)], config)
         self.assertAlmostEqual(ordinary.item(), -1.0)
 
-    def test_cokl_conditioning_normalizes_correct_responses(self):
-        current = torch.tensor([-2.0, -3.0])
-        old = torch.tensor([-2.0, -3.0])
-        weights = conditional_weights(current, old, 0.2)
-        self.assertTrue(torch.allclose(weights, torch.tensor([0.5, 0.5])))
-        skewed = conditional_weights(torch.tensor([-1.0, -4.0]), old, 0.2)
-        self.assertAlmostEqual(skewed.sum().item(), 1.0)
-        self.assertGreater(skewed[0].item(), skewed[1].item())
-
-    def test_cokl_keeps_reference_recovery_when_current_group_has_no_correct_answer(self):
-        parameter = torch.nn.Parameter(torch.tensor(2.0))
-        reference = Rollout(torch.tensor([1, 2]), 1, "", 1.0)
-        with patch("plmco.cokl.completion_logprobs", return_value=parameter.unsqueeze(0)):
-            backward_cokl(None, [reference], [], beta=0.1, importance_clip=0.2)
-        self.assertAlmostEqual(parameter.grad.item(), -0.1)
-
-    def test_paper_baselines_and_equal_generation_limits(self):
+    def test_matched_methods_and_equal_generation_limits(self):
         config = ExperimentConfig.from_json(
-            Path(__file__).resolve().parents[1] / "configs" / "general_math_baseline.json")
-        self.assertEqual(METHODS, ("grpo", "grpo_reference_kl", "cokl_grpo",
-                                   "flip_constrained_grpo"))
+            Path(__file__).resolve().parents[1] / "configs" / "math_retention.json")
+        self.assertEqual(METHODS, ("grpo", "flip_constrained_grpo"))
         self.assertEqual(config.model_name, "Qwen/Qwen2.5-1.5B-Instruct")
         self.assertEqual(config.max_completion_tokens, config.eval_max_new_tokens)
         self.assertEqual(config.max_completion_tokens, config.retention_eval_tokens)
@@ -68,7 +49,7 @@ class MathBaselineTests(unittest.TestCase):
                 return SimpleNamespace(input_ids=text.split())
 
         config = replace(ExperimentConfig.from_json(
-            Path(__file__).resolve().parents[1] / "configs" / "general_math_baseline.json"),
+            Path(__file__).resolve().parents[1] / "configs" / "math_retention.json"),
             max_sft_tokens=80)
         solution = ("Reasoning " * 150) + r"\boxed{7}"
         cases, audit = _eligible([{"problem": "Find seven", "solution": solution}],
@@ -78,7 +59,7 @@ class MathBaselineTests(unittest.TestCase):
 
     def test_dual_weight_responds_to_observed_flip_rate(self):
         config = ExperimentConfig.from_json(
-            Path(__file__).resolve().parents[1] / "configs" / "general_math_baseline.json")
+            Path(__file__).resolve().parents[1] / "configs" / "math_retention.json")
         self.assertGreater(update_multiplier(0.0, 3, 8, config), 0.0)
         self.assertEqual(update_multiplier(0.0, 0, 8, config), 0.0)
         self.assertLess(update_multiplier(0.5, 0, 8, config), 0.5)
@@ -86,7 +67,7 @@ class MathBaselineTests(unittest.TestCase):
 
     def test_only_baseline_correct_anchors_are_selected(self):
         config = ExperimentConfig.from_json(
-            Path(__file__).resolve().parents[1] / "configs" / "general_math_baseline.json")
+            Path(__file__).resolve().parents[1] / "configs" / "math_retention.json")
         cases = [MathCase("a", "algebra", "p1", 1, "\\boxed{1}"),
                  MathCase("b", "algebra", "p2", 2, "\\boxed{2}")]
         fake_model = object()
@@ -120,7 +101,7 @@ class MathBaselineTests(unittest.TestCase):
                 return SimpleNamespace(input_ids=text.split())
 
         config = replace(
-            ExperimentConfig.from_json(Path(__file__).resolve().parents[1] / "configs" / "general_math_baseline.json"),
+            ExperimentConfig.from_json(Path(__file__).resolve().parents[1] / "configs" / "math_retention.json"),
             train_per_topic=1, anchor_per_topic=1, validation_per_topic=1,
             test_per_topic=1,
         )

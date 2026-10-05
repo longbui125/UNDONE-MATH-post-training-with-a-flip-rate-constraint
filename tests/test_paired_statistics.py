@@ -49,8 +49,8 @@ class PairedStatisticsTests(unittest.TestCase):
         import compare
         from dataclasses import replace
         config = replace(ExperimentConfig.from_json(
-            Path(__file__).resolve().parents[1] / "configs/general_math_feedback_v2.json"),
-            topics=["a", "b"], training_seeds=[42])
+            Path(__file__).resolve().parents[1] / "configs/math_retention.json"),
+            topics=["a", "b"], training_seeds=[42], retention_feedback="window")
         predictions = [{**row, "capped": False} for row in self.initial]
         split = {"predictions": predictions, "capped_rate": 0., "no_box_rate": 0.,
                  "by_topic": {"a": .5, "b": 0.}}

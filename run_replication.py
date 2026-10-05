@@ -1,75 +1,39 @@
-"""VS Code: expanded matched GRPO/constraint v2 on seeds 42, 43 and 44."""
+"""One-click runner for the retained seed-42 GRPO/constraint experiment."""
 from __future__ import annotations
 
-import json
-import os
-import sys
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
-sys.path.insert(0, str(ROOT / "src"))
-os.environ.setdefault("HF_HOME", str(ROOT / "hf_cache"))
-
-from compare import run as compare
+from prepare_math_data import run as prepare
+from train import run as train
 from evaluate import run as evaluate
+from compare import run as compare
 from screen_report import run as screen_report
-from plmco.config import ExperimentConfig
-from plmco.math_trainer import train_method
-from plmco.modeling import load_tokenizer
-from plmco.replication import REPLICATION_METHODS, prepare_feedback_revision
-from plmco.retention import prepare_retention_anchors
+from plmco.config import active_config
 from plmco.utils import append_jsonl, write_json
+
+ROOT = Path(__file__).resolve().parent
 
 
 def run() -> None:
     started = time.time()
-    # Explicit selection also routes evaluate/compare/report to the same run.
-    os.environ["PLMCO_CONFIG"] = "general_math_feedback_v2.json"
-    config = ExperimentConfig.from_json(ROOT / "configs" / os.environ["PLMCO_CONFIG"])
+    config = active_config(ROOT)
     output = ROOT / "outputs" / config.run_name
     completed = False
     try:
-        tokenizer = load_tokenizer(config.model_name)
-        splits = prepare_feedback_revision(ROOT, config, tokenizer)
-        retention_ids = prepare_retention_anchors(
-            config, tokenizer, splits["anchor"], output / "retention_baseline.json")
-        coverage = {topic: {"candidate_anchors": sum(case.topic == topic for case in splits["anchor"]),
-                            "initially_correct_anchors": len(retention_ids[topic]),
-                            "maximum_distinct_feedback": min(len(retention_ids[topic]), config.retention_recent_checks)}
-                    for topic in config.topics}
-        write_json(output / "retention_anchor_coverage.json", coverage)
-        for topic, counts in coverage.items():
-            print(f"[anchor coverage/{topic}] {counts}", flush=True)
-            if counts["maximum_distinct_feedback"] < config.retention_recent_checks:
-                print(f"[anchor coverage/{topic}] Fewer correct anchors than the requested feedback window; "
-                      "interpret topic-level retention cautiously.", flush=True)
-        for seed in config.training_seeds:
-            for method in REPLICATION_METHODS:
-                train_method(method, config, tokenizer, splits,
-                             output / f"seed_{seed}" / method, seed,
-                             retention_ids)
-            # Complete a pair before starting the next seed: partial results available sooner.
-            evaluate(seeds=(seed,), methods=REPLICATION_METHODS,
-                     include_initial=seed == config.training_seeds[0])
-            completed_seeds = tuple(config.training_seeds[:config.training_seeds.index(seed) + 1])
-            compare(seeds=completed_seeds, methods=REPLICATION_METHODS,
-                    initial_seed=config.training_seeds[0], filename="comparison.csv")
-            screen_report(filename="comparison.csv", show_baseline_timing=False)
+        prepare()
+        train()
+        evaluate()
+        compare()
+        screen_report(show_baseline_timing=False)
         completed = True
     finally:
-        sessions_path = output / "seed_replication_sessions.jsonl"
-        append_jsonl(sessions_path, {
-            "seeds": config.training_seeds, "methods": list(REPLICATION_METHODS),
-            "seconds": time.time() - started, "completed": completed,
-        })
-        sessions = [json.loads(line) for line in sessions_path.read_text(encoding="utf-8").splitlines()]
-        total = sum(item["seconds"] for item in sessions)
-        write_json(output / "seed_replication_timing.json", {
-            "cumulative_seconds": total, "cumulative_hours": total / 3600,
-            "complete": completed,
-        })
-        print(f"Replication elapsed across launches: {total / 3600:.2f} hours", flush=True)
+        # Keep the original completed-run timing; rerendering tables must not overwrite it.
+        elapsed = time.time() - started
+        append_jsonl(output / "maintenance_sessions.jsonl", {"seconds": elapsed, "completed": completed})
+        if completed and not (output / "seed_replication_timing.json").exists():
+            write_json(output / "seed_replication_timing.json", {
+                "cumulative_seconds": elapsed, "cumulative_hours": elapsed / 3600, "complete": True})
 
 
 if __name__ == "__main__":
