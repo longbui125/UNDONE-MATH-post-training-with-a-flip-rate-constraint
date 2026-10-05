@@ -2,6 +2,8 @@
 
 Project chỉ giữ lượt **seed 42, 128 bước, 640 bài test** đã hoàn tất ngày 05/10/2026. Hai phương pháp: GRPO và GRPO + ràng buộc mềm theo chủ đề. Model: **Qwen/Qwen2.5-1.5B-Instruct**.
 
+Báo cáo ngắn (2 trang): [Bài toán, phương pháp, kết quả và hạn chế của lượt run](output/pdf/bao_cao_grpo_rang_buoc_seed42.pdf).
+
 ## Bài toán
 
 Hậu huấn luyện model trên nhiều chủ đề toán có thể sửa được các bài vốn sai nhưng cũng làm sai các bài model ban đầu giải đúng. Mục tiêu thử nghiệm là giảm tỷ lệ **đúng → sai** mà vẫn cho model học thêm, đồng thời đo chi phí phát sinh.
