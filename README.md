@@ -108,14 +108,14 @@ $$
 Với token j trong lời giải i, tỷ lệ xác suất là:
 
 $$
-\rho_{i,j}=\frac{p_\theta(y_{i,j}\mid x,y_{i,<j})}{p_{\text{old}}(y_{i,j}\mid x,y_{i,<j})}.
+\rho_{i,j}=\frac{p_\theta(y_{i,j}\mid x,y_{i,1:j-1})}{p_{\mathrm{old}}(y_{i,j}\mid x,y_{i,1:j-1})}.
 $$
 
-`p_old` được lưu trước các policy epoch của group hiện tại, **không phải luôn là base model trước toàn lượt train**.
+Ký hiệu `y_{i,1:j-1}` là các token đứng trước token j trong lời giải i; với token đầu tiên, phần này rỗng. `p_old` được lưu trước các policy epoch của group hiện tại, **không phải luôn là base model trước toàn lượt train**.
 
 $$
-L_{\text{GRPO}}=-\frac1G\sum_{i=1}^G\frac1{T_i}\sum_{j=1}^{T_i}
-\min\left(\rho_{i,j}A_i,\operatorname{clip}(\rho_{i,j},0.8,1.2)A_i\right).
+L_{\mathrm{GRPO}}=-\frac{1}{G}\sum_{i=1}^G\frac{1}{T_i}\sum_{j=1}^{T_i}
+\min\left(\rho_{i,j}A_i,\mathrm{clip}(\rho_{i,j},0.8,1.2)A_i\right).
 $$
 
 G là số lời giải; T_i là số token của lời giải i. Code mean trên token từng lời giải rồi mean trên group. Dấu âm chuyển objective cần tối đa hóa thành loss cần tối thiểu hóa. Clipping hạn chế động lực thay đổi xác suất quá mạnh, không bảo đảm cứng mọi cập nhật đều nằm trong một khoảng xác suất.
@@ -135,7 +135,7 @@ Ví dụ minh họa: `2x + 3 = 11` được model ban đầu giải đúng `x = 
 Đưa đề và **lời giải chuẩn từ dataset** vào model với adapter hiện tại. Dùng các token chuẩn trước đó để đo xác suất token chuẩn tiếp theo:
 
 $$
-L_{\text{anchor}}=-\frac1T\sum_{j=1}^T\log p_\theta(y_j^*\mid x,y_{<j}^*).
+L_{\mathrm{anchor}}=-\frac{1}{T}\sum_{j=1}^T\log p_\theta(y_j^*\mid x,y_{1:j-1}^*).
 $$
 
 - Tính trên toàn bộ token lời giải chuẩn và EOS của **một bài anchor được chọn**; không tính token đề.
@@ -168,7 +168,7 @@ $$
 $$
 
 $$
-\lambda_k\leftarrow\operatorname{clip}\left[\lambda_k+0.30(\widehat f_k-0.10),0,1\right].
+\lambda_k\leftarrow\mathrm{clip}\left[\lambda_k+0.30(\widehat f_k-0.10),0,1\right].
 $$
 
 `0,10` là ngưỡng mục tiêu; `0,30` là tốc độ điều chỉnh λ, khác learning rate model; clip giữ λ trong [0; 1]. Vượt ngưỡng thì tăng λ; dưới ngưỡng thì giảm, không xuống dưới 0.
