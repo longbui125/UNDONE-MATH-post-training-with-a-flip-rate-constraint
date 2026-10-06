@@ -35,9 +35,9 @@ Model là **`Qwen/Qwen2.5-1.5B-Instruct`**, đã được tiền huấn luyện 
 
 QLoRA giữ trọng số gốc cố định, chỉ cập nhật adapter:
 
-$$
+```math
 W_{\text{hiệu dụng}}=W_{\text{gốc}}+\Delta W_{\text{LoRA}}.
-$$
+```
 
 “Model ban đầu” và “model hiện tại” dùng cùng kiến trúc và trọng số gốc. Adapter thay đổi qua các bước train, làm xác suất sinh lời giải thay đổi. **Loss anchor được tính bằng model với adapter hiện tại**, không phải lấy loss từ một base model cố định rồi dùng nó để train.
 
@@ -99,24 +99,24 @@ Ví dụ minh họa, không phải log thực nghiệm: “Chọn 3 người t�
 
 Advantage đo mức tốt/kém so với trung bình nhóm:
 
-$$
-A_i=\frac{R_i-\overline R}{\sigma_R+10^{-8}}.
-$$
+```math
+A_{i}=\frac{R_{i}-\overline{R}}{\sigma_{R}+10^{-8}}.
+```
 
 Ở ví dụ này trung bình và độ lệch chuẩn đều là 0,5. Model được khuyến khích tăng xác suất lời giải có advantage dương và giảm xác suất lời giải có advantage âm. Nhóm đều đúng hoặc đều sai không có tín hiệu phân biệt; code bỏ cập nhật GRPO của nhóm đó.
 
 Với token j trong lời giải i, tỷ lệ xác suất là:
 
-$$
-\rho_{i,j}=\frac{p_\theta(y_{i,j}\mid x,y_{i,1:j-1})}{p_{\mathrm{old}}(y_{i,j}\mid x,y_{i,1:j-1})}.
-$$
+```math
+\rho_{i,j}=\frac{p_{\theta}(y_{i,j}\mid x,y_{i,1:j-1})}{p_{\mathrm{old}}(y_{i,j}\mid x,y_{i,1:j-1})}.
+```
 
 Ký hiệu `y_{i,1:j-1}` là các token đứng trước token j trong lời giải i; với token đầu tiên, phần này rỗng. `p_old` được lưu trước các policy epoch của group hiện tại, **không phải luôn là base model trước toàn lượt train**.
 
-$$
-L_{\mathrm{GRPO}}=-\frac{1}{G}\sum_{i=1}^G\frac{1}{T_i}\sum_{j=1}^{T_i}
-\min\left(\rho_{i,j}A_i,\mathrm{clip}(\rho_{i,j},0.8,1.2)A_i\right).
-$$
+```math
+L_{\mathrm{GRPO}}=-\frac{1}{G}\sum_{i=1}^{G}\frac{1}{T_{i}}\sum_{j=1}^{T_{i}}
+\min\left(\rho_{i,j}A_{i},\mathrm{clip}(\rho_{i,j},0.8,1.2)A_{i}\right).
+```
 
 G là số lời giải; T_i là số token của lời giải i. Code mean trên token từng lời giải rồi mean trên group. Dấu âm chuyển objective cần tối đa hóa thành loss cần tối thiểu hóa. Clipping hạn chế động lực thay đổi xác suất quá mạnh, không bảo đảm cứng mọi cập nhật đều nằm trong một khoảng xác suất.
 
@@ -134,9 +134,9 @@ Ví dụ minh họa: `2x + 3 = 11` được model ban đầu giải đúng `x = 
 
 Đưa đề và **lời giải chuẩn từ dataset** vào model với adapter hiện tại. Dùng các token chuẩn trước đó để đo xác suất token chuẩn tiếp theo:
 
-$$
-L_{\mathrm{anchor}}=-\frac{1}{T}\sum_{j=1}^T\log p_\theta(y_j^*\mid x,y_{1:j-1}^*).
-$$
+```math
+L_{\mathrm{anchor}}=-\frac{1}{T}\sum_{j=1}^{T}\log p_{\theta}\left(y_{j}^{\ast}\mid x,y_{1:j-1}^{\ast}\right).
+```
 
 - Tính trên toàn bộ token lời giải chuẩn và EOS của **một bài anchor được chọn**; không tính token đề.
 - Không tính loss trên toàn bộ tập anchor mỗi bước.
@@ -147,13 +147,13 @@ Xác suất token chuẩn càng cao, loss càng nhỏ. Ví dụ: `p = 0,8` cho `
 
 ### 4.3. λ tác động vào đâu?
 
-$$
-L_{\text{tổng}}=L_{\text{GRPO}}+\lambda_kL_{\text{anchor}}.
-$$
+```math
+L_{\text{tổng}}=L_{\mathrm{GRPO}}+\lambda_{k}L_{\mathrm{anchor}}.
+```
 
-$$
-\nabla L_{\text{tổng}}=\nabla L_{\text{GRPO}}+\lambda_k\nabla L_{\text{anchor}}.
-$$
+```math
+\nabla L_{\text{tổng}}=\nabla L_{\mathrm{GRPO}}+\lambda_{k}\nabla L_{\mathrm{anchor}}.
+```
 
 λ_k là hệ số riêng cho chủ đề k của anchor. λ nhân sức tác động của gradient anchor; không sửa reward GRPO. λ = 0 thì chỉ kiểm tra anchor, chưa thêm loss; λ tăng thì thành phần giữ lời giải chuẩn tác động mạnh hơn; λ giảm thì tác động yếu đi.
 
@@ -163,13 +163,13 @@ $$
 
 λ khởi tạo 0. Sau mỗi cửa sổ **32 bước toàn cục**, mỗi chủ đề có 8 lượt kiểm tra trong cấu hình này:
 
-$$
-\widehat f_k=\frac{\text{số lượt anchor trả lời sai}}{\text{tổng lượt kiểm tra anchor}}.
-$$
+```math
+\widehat{f}_{k}=\frac{\text{số lượt anchor trả lời sai}}{\text{tổng lượt kiểm tra anchor}}.
+```
 
-$$
-\lambda_k\leftarrow\mathrm{clip}\left[\lambda_k+0.30(\widehat f_k-0.10),0,1\right].
-$$
+```math
+\lambda_{k}\leftarrow\mathrm{clip}\left[\lambda_{k}+0.30(\widehat{f}_{k}-0.10),0,1\right].
+```
 
 `0,10` là ngưỡng mục tiêu; `0,30` là tốc độ điều chỉnh λ, khác learning rate model; clip giữ λ trong [0; 1]. Vượt ngưỡng thì tăng λ; dưới ngưỡng thì giảm, không xuống dưới 0.
 
